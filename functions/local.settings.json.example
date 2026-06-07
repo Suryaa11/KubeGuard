@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AZURE_STORAGE_CONNECTION_STRING": "your-storage-connection-string",
+    "AZURE_STORAGE_CONTAINER": "kubeguard-reports",
+    "SERVICE_BUS_CONNECTION_STRING": "your-service-bus-connection-string",
+    "SERVICE_BUS_QUEUE": "report-ready",
+    "ANALYSIS_SERVICE_URL": "http://localhost:3003",
+    "INTERNAL_SECRET": "your-internal-secret",
+    "BLOB_HOT_TO_COOL_DAYS": "7"
+  }
+}
