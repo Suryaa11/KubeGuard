@@ -29,7 +29,19 @@ export const LandingPage = () => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
 
   const handleSignIn = async () => {
+  try {
     await msalInstance.loginRedirect(loginRequest)
+  } catch (err) {
+    if (err.errorCode === 'interaction_in_progress') {
+      // Clear stale MSAL keys only — not the entire sessionStorage
+      Object.keys(sessionStorage)
+        .filter((key) => key.startsWith('msal.'))
+        .forEach((key) => sessionStorage.removeItem(key))
+      await msalInstance.loginRedirect(loginRequest)
+    } else {
+      console.error('[LandingPage] Login error:', err)
+    }
+  }
   }
 
   return (
