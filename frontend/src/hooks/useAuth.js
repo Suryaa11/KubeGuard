@@ -1,57 +1,52 @@
 import { useEffect } from 'react'
-import { loginRequest, msalInstance, msalInitPromise } from '../auth/msalConfig'
+import { useLocation } from 'react-router-dom'
+import { msalInstance, msalInitPromise, loginRequest } from '../auth/msalConfig'
 import { verifyToken } from '../services/api'
 import { useAuthStore } from '../store/authStore'
-import { useToastStore } from '../store/toastStore'
 
 export const useAuth = () => {
-  const { user, isAuthenticated, isLoading, setAuth, clearAuth, setLoading } = useAuthStore()
-  const addToast = useToastStore((state) => state.addToast)
+  const { setAuth, clearAuth, setLoading } = useAuthStore()
+  const location = useLocation()
 
   useEffect(() => {
-    const bootstrap = async () => {
+    // If we're on the callback page, do nothing.
+    // AuthCallback.jsx owns that route entirely.
+    if (location.pathname === '/auth/callback') return
+
+    const tryRestoreSession = async () => {
       try {
         await msalInitPromise
 
-        // If we are on the callback route, do nothing here
-        // AuthCallback.jsx handles the redirect — let it run first
-        if (window.location.pathname === '/auth/callback') {
+        // Handle any pending redirect first (e.g. if user lands on / after redirect)
+        const redirectResult = await msalInstance.handleRedirectPromise()
+        if (redirectResult?.accessToken) {
+          const response = await verifyToken(redirectResult.accessToken)
+          setAuth(response.data, redirectResult.accessToken)
           return
         }
 
+        // No redirect — try silent token from existing session
         const accounts = msalInstance.getAllAccounts()
-        if (!accounts.length) {
-          setLoading(false)
+        if (accounts.length === 0) {
+          clearAuth()
           return
         }
 
         msalInstance.setActiveAccount(accounts[0])
-        const result = await msalInstance.acquireTokenSilent({
+        const silentResult = await msalInstance.acquireTokenSilent({
           ...loginRequest,
           account: accounts[0],
         })
-        const response = await verifyToken(result.accessToken)
-        setAuth(response.data, result.accessToken)
-      } catch (error) {
+        const response = await verifyToken(silentResult.accessToken)
+        setAuth(response.data, silentResult.accessToken)
+      } catch (err) {
+        console.warn('[useAuth] Session restore failed:', err.message)
         clearAuth()
       } finally {
         setLoading(false)
       }
     }
 
-    bootstrap()
-  }, [clearAuth, setAuth, setLoading])
-
-  const signIn = async () => {
-    await msalInitPromise
-    await msalInstance.loginRedirect(loginRequest)
-  }
-
-  const signOut = async () => {
-    clearAuth()
-    addToast({ type: 'info', title: 'Signed out', message: 'You have been signed out.' })
-    await msalInstance.logoutRedirect()
-  }
-
-  return { user, isAuthenticated, isLoading, signIn, signOut }
+    tryRestoreSession()
+  }, [location.pathname, setAuth, clearAuth, setLoading])
 }
