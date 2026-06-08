@@ -1,19 +1,24 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { loginRequest, msalInstance } from '../auth/msalConfig'
+import { loginRequest, msalInstance, msalInitPromise } from '../auth/msalConfig'
 import { verifyToken } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { useToastStore } from '../store/toastStore'
 
 export const useAuth = () => {
-  const navigate = useNavigate()
   const { user, isAuthenticated, isLoading, setAuth, clearAuth, setLoading } = useAuthStore()
   const addToast = useToastStore((state) => state.addToast)
 
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        await msalInstance.initialize()
+        await msalInitPromise
+
+        // If we are on the callback route, do nothing here
+        // AuthCallback.jsx handles the redirect — let it run first
+        if (window.location.pathname === '/auth/callback') {
+          return
+        }
+
         const accounts = msalInstance.getAllAccounts()
         if (!accounts.length) {
           setLoading(false)
@@ -38,6 +43,7 @@ export const useAuth = () => {
   }, [clearAuth, setAuth, setLoading])
 
   const signIn = async () => {
+    await msalInitPromise
     await msalInstance.loginRedirect(loginRequest)
   }
 
@@ -47,5 +53,5 @@ export const useAuth = () => {
     await msalInstance.logoutRedirect()
   }
 
-  return { user, isAuthenticated, isLoading, signIn, signOut, navigate }
+  return { user, isAuthenticated, isLoading, signIn, signOut }
 }

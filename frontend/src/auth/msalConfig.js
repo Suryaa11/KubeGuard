@@ -26,3 +26,6 @@ export const loginRequest = {
 }
 
 export const msalInstance = new PublicClientApplication(msalConfig)
+
+// Initialize once at module load — export the promise so components can await it
+export const msalInitPromise = msalInstance.initialize()
