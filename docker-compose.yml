@@ -9,22 +9,41 @@ version: '3.9'
 services:
 
   # ── Frontend ───────────────────────────────────────────────
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     args:
+  #       VITE_AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
+  #       VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
+  #       VITE_AZURE_REDIRECT_URI: "http://localhost/auth/callback"
+  #       VITE_API_BASE_URL: "http://localhost:3000"
+  #   ports:
+  #     - "80:80"
+  #   depends_on:
+  #     gateway:
+  #       condition: service_started
+  #   restart: unless-stopped
+  #   networks:
+  #     - kubeguard-net
+
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
-        VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
-        VITE_AZURE_REDIRECT_URI: "http://localhost/auth/callback"
-        VITE_API_BASE_URL: "http://localhost:3000"
-    ports:
-      - "80:80"
-    depends_on:
-      gateway:
-        condition: service_started
-    restart: unless-stopped
-    networks:
-      - kubeguard-net
+      build:
+        context: ./frontend
+        args:
+          VITE_AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
+          VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
+          VITE_AZURE_REDIRECT_URI: "https://20.235.136.76/auth/callback"
+          VITE_API_BASE_URL: "http://20.235.136.76:3000"
+          VM_IP: "20.235.136.76"
+      ports:
+        - "80:80"
+        - "443:443"
+      depends_on:
+        gateway:
+          condition: service_started
+      restart: unless-stopped
+      networks:
+        - kubeguard-net
 
   # ── API Gateway ────────────────────────────────────────────
   gateway:
