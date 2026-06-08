@@ -1,90 +1,188 @@
 version: '3.9'
 
+# ============================================================
+#  KubeGuard AI — Docker Compose (Single VM / Local Testing)
+#  Run: docker-compose up --build
+#  All services start together. Frontend available at :80
+# ============================================================
+
 services:
+
+  # ── Frontend ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
+        VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
+        VITE_AZURE_REDIRECT_URI: "http://localhost/auth/callback"
+        VITE_API_BASE_URL: "http://localhost:3000"
+    ports:
+      - "80:80"
+    depends_on:
+      gateway:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - kubeguard-net
+
+  # ── API Gateway ────────────────────────────────────────────
   gateway:
     build: ./gateway
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: development
+      SERVICE_NAME: gateway
       GATEWAY_PORT: 3000
-      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
-      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
-      PROJECT_SERVICE_URL: http://project-service:3001
-      WATCHER_SERVICE_URL: http://watcher-service:3002
-      ANALYSIS_SERVICE_URL: http://analysis-service:3003
-      NOTIFICATION_SERVICE_URL: http://notification-service:3004
-      INTERNAL_SECRET: ${INTERNAL_SECRET}
-    depends_on: []
+      AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
+      AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
+      FRONTEND_URL: "http://localhost"
+      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
+      PROJECT_SERVICE_URL: "http://project-service:3001"
+      WATCHER_SERVICE_URL: "http://watcher-service:3002"
+      ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:3004"
     restart: unless-stopped
+    networks:
+      - kubeguard-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
+  # ── Project Service ────────────────────────────────────────
   project-service:
     build: ./project-service
     ports:
       - "3001:3001"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: development
+      SERVICE_NAME: project-service
       PROJECT_PORT: 3001
-      MONGODB_URI: ${MONGODB_URI}
-      INTERNAL_SECRET: ${INTERNAL_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL}
+      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
+      ENCRYPTION_KEY: "KubeGuard-Encrypt-Key-32chars!!"
+      # GitHub PAT — leave empty for now, webhook registration will be skipped gracefully
+      GITHUB_TOKEN: ""
+      # For local/VM testing, set this to your VM's IP or hostname
+      # Replace YOUR_VM_IP with your actual VM IP address
+      GATEWAY_PUBLIC_URL: "http://YOUR_VM_IP:3000"
+      WATCHER_SERVICE_URL: "http://watcher-service:3002"
     restart: unless-stopped
+    networks:
+      - kubeguard-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
 
+  # ── Watcher Service ────────────────────────────────────────
   watcher-service:
     build: ./watcher-service
     ports:
       - "3002:3002"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: development
+      SERVICE_NAME: watcher-service
       WATCHER_PORT: 3002
-      MONGODB_URI: ${MONGODB_URI}
-      INTERNAL_SECRET: ${INTERNAL_SECRET}
-      PROJECT_SERVICE_URL: http://project-service:3001
-      ANALYSIS_SERVICE_URL: http://analysis-service:3003
+      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
+      PROJECT_SERVICE_URL: "http://project-service:3001"
+      ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
     depends_on:
-      - project-service
+      project-service:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - kubeguard-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
 
+  # ── Analysis Service ───────────────────────────────────────
   analysis-service:
     build: ./analysis-service
     ports:
       - "3003:3003"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: development
+      SERVICE_NAME: analysis-service
       ANALYSIS_PORT: 3003
-      MONGODB_URI: ${MONGODB_URI}
-      INTERNAL_SECRET: ${INTERNAL_SECRET}
-      AI_API_URL: ${AI_API_URL}
-      AI_API_KEY: ${AI_API_KEY}
-      AI_MODEL: ${AI_MODEL}
-      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING}
-      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-kubeguard-reports}
-      SERVICE_BUS_CONNECTION_STRING: ${SERVICE_BUS_CONNECTION_STRING}
-      SERVICE_BUS_QUEUE: ${SERVICE_BUS_QUEUE:-report-ready}
-      PROJECT_SERVICE_URL: http://project-service:3001
-      WATCHER_SERVICE_URL: http://watcher-service:3002
-      ADMIN_EMAILS: ${ADMIN_EMAILS}
+      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
+      # AI Model — using Claude Sonnet via Anthropic API for testing
+      # Replace with your actual key when ready
+      AI_API_URL: "https://api.anthropic.com/v1/messages"
+      AI_API_KEY: "YOUR_ANTHROPIC_OR_OPENAI_KEY_HERE"
+      AI_MODEL: "claude-haiku-4-5"
+      # Azure Blob Storage
+      AZURE_STORAGE_CONNECTION_STRING: 
+      AZURE_STORAGE_CONTAINER: "reports"
+      # Azure Service Bus
+      SERVICE_BUS_CONNECTION_STRING: "PASTE_YOUR_SERVICE_BUS_CONNECTION_STRING_HERE"
+      SERVICE_BUS_QUEUE: "report-ready"
+      # Internal service URLs
+      PROJECT_SERVICE_URL: "http://project-service:3001"
+      WATCHER_SERVICE_URL: "http://watcher-service:3002"
+      # Admin email for reports
+      ADMIN_EMAILS: "ksurya112003@gmail.com"
     depends_on:
-      - project-service
-      - watcher-service
+      project-service:
+        condition: service_healthy
+      watcher-service:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - kubeguard-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_AZURE_CLIENT_ID: ${VITE_AZURE_CLIENT_ID}
-        VITE_AZURE_TENANT_ID: ${VITE_AZURE_TENANT_ID}
-        VITE_AZURE_REDIRECT_URI: ${VITE_AZURE_REDIRECT_URI}
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
-    ports:
-      - "80:80"
-    depends_on:
-      - project-service
-      - watcher-service
-      - analysis-service
-      - gateway
-    restart: unless-stopped
+  # ── Notification Service ───────────────────────────────────
+  # NOTE: Build this service first using PROMPT_06_NOTIFICATION_SERVICE.md
+  # Once built, uncomment this block
+  # notification-service:
+  #   build: ./notification-service
+  #   ports:
+  #     - "3004:3004"
+  #   environment:
+  #     NODE_ENV: development
+  #     SERVICE_NAME: notification-service
+  #     NOTIFICATION_PORT: 3004
+  #     MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+  #     INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
+  #     NOTIFICATION_SECRET: "kube-guard-notif-secret-key-2024-approval-tokens!!"
+  #     SERVICE_BUS_CONNECTION_STRING: "PASTE_YOUR_SERVICE_BUS_CONNECTION_STRING_HERE"
+  #     SERVICE_BUS_QUEUE: "report-ready"
+  #     EMAIL_FROM: "ksurya112003@gmail.com"
+  #     EMAIL_FROM_NAME: "KubeGuard AI"
+  #     SENDGRID_API_KEY: "PASTE_YOUR_SENDGRID_KEY_HERE"
+  #     SMTP_HOST: "smtp.sendgrid.net"
+  #     SMTP_PORT: "587"
+  #     SMTP_USER: "apikey"
+  #     GATEWAY_PUBLIC_URL: "http://YOUR_VM_IP:3000"
+  #     FRONTEND_URL: "http://YOUR_VM_IP"
+  #     PROJECT_SERVICE_URL: "http://project-service:3001"
+  #     WATCHER_SERVICE_URL: "http://watcher-service:3002"
+  #     ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
+  #   depends_on:
+  #     analysis-service:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - kubeguard-net
+
+networks:
+  kubeguard-net:
+    driver: bridge
