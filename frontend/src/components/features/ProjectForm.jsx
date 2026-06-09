@@ -76,8 +76,8 @@ export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
           <Input label="GitHub repo URL" name="githubRepoUrl" value={form.githubRepoUrl} onChange={handleChange} icon={LinkIcon} required />
           <Input label="Branch" name="branch" value={form.branch} onChange={handleChange} icon={GitBranch} required />
           <Input label="Folder path" name="folderPath" value={form.folderPath} onChange={handleChange} icon={Waypoints} required />
-          <Input label="ArgoCD app name" name="argoCdAppName" value={form.argoCdAppName} onChange={handleChange} icon={FolderKanban} required />
-          <Input label="ArgoCD token" name="argocdToken" value={form.argocdToken} onChange={handleChange} icon={Save} placeholder={project ? '••••••••' : ''} />
+          <Input label="ArgoCD app name" name="argocdAppName" value={form.argocdAppName} onChange={handleChange} icon={FolderKanban} required />
+          <Input label="ArgoCD token" name="argocdToken" value={form.argocdToken} onChange={handleChange} icon={Save} placeholder={project ? '••••••••' : ''} required />
           <Input label="Prometheus URL" name="prometheusUrl" value={form.prometheusUrl} onChange={handleChange} icon={LinkIcon} required placeholder="http://prometheus.monitoring.svc:9090" />
           <Input label="ArgoCD URL" name="argocdUrl" value={form.argocdUrl} onChange={handleChange} icon={LinkIcon} required placeholder="https://argocd.company.com" />
           <Input label="Kubernetes API URL" name="kubernetesApiUrl" value={form.kubernetesApiUrl} onChange={handleChange} icon={Waypoints} placeholder="https://your-cluster-api:6443" />
