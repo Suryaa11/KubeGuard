@@ -11,8 +11,8 @@ const initialState = {
   githubRepoUrl: '',
   branch: 'main',
   folderPath: '',
-  argoCdAppName: '',
-  argoCdToken: '',
+  argocdAppName: '',
+  argocdToken: '',
 }
 
 export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
@@ -28,8 +28,8 @@ export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
         githubRepoUrl: project.githubRepoUrl || '',
         branch: project.branch || 'main',
         folderPath: project.folderPath || '',
-        argoCdAppName: project.argoCdAppName || '',
-        argoCdToken: '',
+        argocdAppName: project.argocdAppName || '',
+        argocdToken: '',
       })
     } else {
       setForm(initialState)

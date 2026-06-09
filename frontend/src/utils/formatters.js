@@ -44,4 +44,4 @@ export const formatStatus = (status) =>
     pending_approval: { label: 'Pending Approval', color: '#F59E0B', pulse: true },
     paused: { label: 'Paused', color: '#6B7FA3', pulse: false },
     error: { label: 'Error', color: '#F43F5E', pulse: false },
-  }[status]) || { label: status, color: '#6B7FA3', pulse: false }
+  }[status?.toLowerCase()]) || { label: status || 'Unknown', color: '#6B7FA3', pulse: false }
