@@ -1,4 +1,4 @@
-name: Build and deploy backend services to Azure Web App - microservice-app-nnurp3
+name: Deploy Gateway and Project Service to Azure Web App
 
 on:
   push:
@@ -15,37 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js version
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-
-      - name: Install gateway dependencies
-        working-directory: ./gateway
-        run: npm install --omit=dev
-
-      - name: Install project-service dependencies
-        working-directory: ./project-service
-        run: npm install --omit=dev
-
-      - name: Install watcher-service dependencies
-        working-directory: ./watcher-service
-        run: npm install --omit=dev
-
-      - name: Install analysis-service dependencies
-        working-directory: ./analysis-service
-        run: npm install --omit=dev
-
       - name: Prepare backend package
         run: |
           mkdir backend-package
           cp -r gateway backend-package/
           cp -r project-service backend-package/
-          cp -r watcher-service backend-package/
-          cp -r analysis-service backend-package/
           cp ecosystem.config.js backend-package/
 
-      - name: Upload artifact for deployment job
+      - name: Upload backend artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend-app
@@ -58,12 +35,12 @@ jobs:
       contents: read
 
     steps:
-      - name: Download artifact from package job
+      - name: Download backend artifact
         uses: actions/download-artifact@v4
         with:
           name: backend-app
 
-      - name: Deploy to Azure Web App using publish profile
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'microservice-app-nnurp3'
