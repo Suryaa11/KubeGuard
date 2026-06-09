@@ -24,7 +24,7 @@ app.get('/health', (req, res) => {
 })
 
 app.use('/internal', internalRoutes)
-app.use('/', projectRoutes)
+app.use('/projects', projectRoutes)
 
 app.use((err, req, res, next) => {
   console.error('[project-service] Error:', err.message)
