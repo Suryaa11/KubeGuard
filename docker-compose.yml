@@ -56,7 +56,7 @@ services:
       GATEWAY_PORT: 3000
       AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
       AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
-      FRONTEND_URL: "http://localhost"
+      FRONTEND_URL: "https://20.235.136.76"
       INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
       PROJECT_SERVICE_URL: "http://project-service:3001"
       WATCHER_SERVICE_URL: "http://watcher-service:3002"
@@ -85,7 +85,7 @@ services:
       INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
       ENCRYPTION_KEY: "KubeGuard-Encrypt-Key-32chars!!"
       # GitHub PAT — leave empty for now, webhook registration will be skipped gracefully
-      GITHUB_TOKEN: ""
+      GITHUB_TOKEN: "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"
       # For local/VM testing, set this to your VM's IP or hostname
       # Replace YOUR_VM_IP with your actual VM IP address
       GATEWAY_PUBLIC_URL: "http://YOUR_VM_IP:3000"
