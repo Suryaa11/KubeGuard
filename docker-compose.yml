@@ -143,7 +143,7 @@ services:
       AI_API_KEY: "YOUR_ANTHROPIC_OR_OPENAI_KEY_HERE"
       AI_MODEL: "claude-haiku-4-5"
       # Azure Blob Storage
-      AZURE_STORAGE_CONNECTION_STRING: 
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=demosstorages1;AccountKey=rHfa5izhmVhcR7Bu5ehuEZbFPzHN9P/x/byBeNGhj++PonqxhT2CfidNt1dHi/ZgouXMJFZYvr4s+AStFnhEQw==;EndpointSuffix=core.windows.net" 
       AZURE_STORAGE_CONTAINER: "reports"
       # Azure Service Bus
       SERVICE_BUS_CONNECTION_STRING: "PASTE_YOUR_SERVICE_BUS_CONNECTION_STRING_HERE"
