@@ -11,8 +11,12 @@ const initialState = {
   githubRepoUrl: '',
   branch: 'main',
   folderPath: '',
+  prometheusUrl: '',
+  argocdUrl: '',
   argocdAppName: '',
   argocdToken: '',
+  kubernetesToken: '',
+  kubernetesApiUrl: '',
 }
 
 export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
@@ -28,8 +32,12 @@ export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
         githubRepoUrl: project.githubRepoUrl || '',
         branch: project.branch || 'main',
         folderPath: project.folderPath || '',
+        prometheusUrl: project.prometheusUrl || '',
+        argocdUrl: project.argocdUrl || '',
         argocdAppName: project.argocdAppName || '',
         argocdToken: '',
+        kubernetesToken: '',
+        kubernetesApiUrl: '',
       })
     } else {
       setForm(initialState)
@@ -69,7 +77,11 @@ export const ProjectForm = ({ project, isOpen, onClose, onSaved }) => {
           <Input label="Branch" name="branch" value={form.branch} onChange={handleChange} icon={GitBranch} required />
           <Input label="Folder path" name="folderPath" value={form.folderPath} onChange={handleChange} icon={Waypoints} required />
           <Input label="ArgoCD app name" name="argoCdAppName" value={form.argoCdAppName} onChange={handleChange} icon={FolderKanban} required />
-          <Input label="ArgoCD token" name="argoCdToken" value={form.argoCdToken} onChange={handleChange} icon={Save} placeholder={project ? '••••••••' : ''} />
+          <Input label="ArgoCD token" name="argocdToken" value={form.argocdToken} onChange={handleChange} icon={Save} placeholder={project ? '••••••••' : ''} />
+          <Input label="Prometheus URL" name="prometheusUrl" value={form.prometheusUrl} onChange={handleChange} icon={LinkIcon} required placeholder="http://prometheus.monitoring.svc:9090" />
+          <Input label="ArgoCD URL" name="argocdUrl" value={form.argocdUrl} onChange={handleChange} icon={LinkIcon} required placeholder="https://argocd.company.com" />
+          <Input label="Kubernetes API URL" name="kubernetesApiUrl" value={form.kubernetesApiUrl} onChange={handleChange} icon={Waypoints} placeholder="https://your-cluster-api:6443" />
+          <Input label="Kubernetes token" name="kubernetesToken" value={form.kubernetesToken} onChange={handleChange} icon={Save} placeholder="Optional" />
         </div>
         {errors.form ? <p className="text-sm text-rose-400">{errors.form}</p> : null}
         <div className="flex justify-end gap-3 pt-2">
