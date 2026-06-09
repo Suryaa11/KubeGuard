@@ -10,8 +10,9 @@ const icons = {
 }
 
 export const RiskBadge = ({ score, size = 'sm' }) => {
-  const risk = formatRisk(score)
-  const Icon = icons[score] || Shield
+  const normalised = score?.toLowerCase()
+  const risk = formatRisk(normalised)
+  const Icon = icons[normalised] || Shield
   return (
     <Badge
       label={
