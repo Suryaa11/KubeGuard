@@ -72,7 +72,7 @@ services:
       # Previous value "KubeGuard-Encrypt-Key-32chars!!" was 31 chars — caused 500 errors.
       # This value is exactly 32 chars (verified):
       ENCRYPTION_KEY: "KubeGuard-EncryptKey-32chars!!XY"
-      GITHUB_TOKEN: ""
+      GITHUB_TOKEN: "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"
       GATEWAY_PUBLIC_URL: "http://20.235.136.76:3000"
       WATCHER_SERVICE_URL: "http://watcher-service:3002"
     restart: unless-stopped
