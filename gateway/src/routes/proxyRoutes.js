@@ -1,3 +1,7 @@
+// gateway/src/routes/proxyRoutes.js
+// Routes all incoming /api/* requests to the correct downstream microservice.
+// Token validation and role checks are applied per route as defined here.
+
 const express = require('express')
 const { createProxyMiddleware } = require('http-proxy-middleware')
 const { generalLimiter, webhookLimiter } = require('../middleware/rateLimits')
@@ -32,6 +36,7 @@ function makeProxy(target, pathRewrite = { '^/api': '' }, options = {}) {
 
 const router = express.Router()
 
+// ── GitHub webhook — NO auth, raw body preserved for HMAC verification ────
 router.all(
   '/api/webhook/:projectId',
   webhookLimiter,
@@ -39,6 +44,17 @@ router.all(
   makeProxy(process.env.WATCHER_SERVICE_URL, { '^/api/webhook': '/webhook' }, { forwardRawBody: true })
 )
 
+// ── Email approval link — NO Entra ID auth, uses HMAC-signed token ─────────
+// MUST be registered BEFORE the catch-all /api/notify* route below.
+// When an admin clicks Approve/Reject in their email, they have no Bearer token.
+// The notification service verifies the signed token in the query string instead.
+router.get(
+  '/api/notify/decide',
+  webhookLimiter,
+  makeProxy(process.env.NOTIFICATION_SERVICE_URL)
+)
+
+// ── Dashboard approve/reject — Admin role required ────────────────────────
 router.post(
   '/api/reports/:id/decide',
   generalLimiter,
@@ -57,9 +73,37 @@ router.post(
   makeProxy(process.env.NOTIFICATION_SERVICE_URL)
 )
 
-router.all('/api/projects*', generalLimiter, validateEntraToken, extractUserHeaders, makeProxy(process.env.PROJECT_SERVICE_URL))
-router.all('/api/events*', generalLimiter, validateEntraToken, extractUserHeaders, makeProxy(process.env.WATCHER_SERVICE_URL))
-router.all('/api/reports*', generalLimiter, validateEntraToken, extractUserHeaders, makeProxy(process.env.ANALYSIS_SERVICE_URL))
-router.all('/api/notify*', generalLimiter, validateEntraToken, extractUserHeaders, makeProxy(process.env.NOTIFICATION_SERVICE_URL))
+// ── Standard authenticated routes ─────────────────────────────────────────
+router.all(
+  '/api/projects*',
+  generalLimiter,
+  validateEntraToken,
+  extractUserHeaders,
+  makeProxy(process.env.PROJECT_SERVICE_URL)
+)
+
+router.all(
+  '/api/events*',
+  generalLimiter,
+  validateEntraToken,
+  extractUserHeaders,
+  makeProxy(process.env.WATCHER_SERVICE_URL)
+)
+
+router.all(
+  '/api/reports*',
+  generalLimiter,
+  validateEntraToken,
+  extractUserHeaders,
+  makeProxy(process.env.ANALYSIS_SERVICE_URL)
+)
+
+router.all(
+  '/api/notify*',
+  generalLimiter,
+  validateEntraToken,
+  extractUserHeaders,
+  makeProxy(process.env.NOTIFICATION_SERVICE_URL)
+)
 
 module.exports = router
