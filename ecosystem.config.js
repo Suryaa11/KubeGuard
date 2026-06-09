@@ -1,0 +1,39 @@
+module.exports = {
+  apps: [
+    {
+      name: "gateway",
+      cwd: "./gateway",
+      script: "server.js",
+      env: {
+        PORT: 8080,
+        PROJECT_SERVICE_URL: "http://localhost:3001",
+        WATCHER_SERVICE_URL: "http://localhost:3002",
+        ANALYSIS_SERVICE_URL: "http://localhost:3003"
+      }
+    },
+    {
+      name: "project-service",
+      cwd: "./project-service",
+      script: "server.js",
+      env: {
+        PORT: 3001
+      }
+    },
+    {
+      name: "watcher-service",
+      cwd: "./watcher-service",
+      script: "server.js",
+      env: {
+        PORT: 3002
+      }
+    },
+    {
+      name: "analysis-service",
+      cwd: "./analysis-service",
+      script: "server.js",
+      env: {
+        PORT: 3003
+      }
+    }
+  ]
+};
