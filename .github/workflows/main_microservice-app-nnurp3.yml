@@ -1,53 +1,39 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy backend services to Azure Web App - microservice-app-nnurp3
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-jobs:
-  package:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Prepare backend package
-        run: |
-          mkdir backend-package
-          cp -r gateway backend-package/
-          cp -r project-service backend-package/
-          cp -r watcher-service backend-package/
-          cp -r analysis-service backend-package/
-          cp ecosystem.config.js backend-package/
-
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-app
-          path: backend-package
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: package
-    permissions:
-      contents: read
-
-    steps:
-      - name: Download artifact from package job
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-app
-
-      - name: Deploy to Azure Web App using publish profile
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: 'microservice-app-nnurp3'
-          publish-profile: ${{ secrets.BACKEND_WEBAPP_PUBLISH_PROFILE }}
-          package: .
+module.exports = {
+  apps: [
+    {
+      name: "gateway",
+      cwd: "./gateway",
+      script: "server.js",
+      env: {
+        PORT: 8080,
+        PROJECT_SERVICE_URL: "http://localhost:3001",
+        WATCHER_SERVICE_URL: "http://localhost:3002",
+        ANALYSIS_SERVICE_URL: "http://localhost:3003"
+      }
+    },
+    {
+      name: "project-service",
+      cwd: "./project-service",
+      script: "server.js",
+      env: {
+        PORT: 3001
+      }
+    },
+    {
+      name: "watcher-service",
+      cwd: "./watcher-service",
+      script: "server.js",
+      env: {
+        PORT: 3002
+      }
+    },
+    {
+      name: "analysis-service",
+      cwd: "./analysis-service",
+      script: "server.js",
+      env: {
+        PORT: 3003
+      }
+    }
+  ]
+};
