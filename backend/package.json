@@ -1,0 +1,23 @@
+{
+  "name": "kubeguard-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^8.0.0",
+    "axios": "^1.6.0",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0",
+    "joi": "^17.11.0",
+    "js-yaml": "^4.1.0",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.0",
+    "@azure/storage-blob": "^12.17.0",
+    "@azure/service-bus": "^7.9.0"
+  }
+}
