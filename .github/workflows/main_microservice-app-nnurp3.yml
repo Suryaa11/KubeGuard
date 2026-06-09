@@ -45,7 +45,7 @@ jobs:
         with:
           name: backend-app
 
-      - name: Deploy to Azure Web App
+      - name: Deploy to Azure Web App using publish profile
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'microservice-app-nnurp3'
