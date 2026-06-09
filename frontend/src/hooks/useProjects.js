@@ -13,7 +13,7 @@ export const useProjects = () => {
     setError(null)
     try {
       const response = await getProjects()
-      setProjects(response.data || [])
+      setProjects(response.data?.projects || [])
     } catch (err) {
       setError(err.message || 'Unable to load projects.')
     } finally {
