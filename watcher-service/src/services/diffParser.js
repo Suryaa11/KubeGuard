@@ -1,6 +1,6 @@
 const yaml = require('js-yaml')
 
-const CRITICAL_FIELDS = new Set([
+const CRITICAL_FIELDS = [
   'replicaCount',
   'replicas',
   'cpu',
@@ -13,122 +13,101 @@ const CRITICAL_FIELDS = new Set([
   'image',
   'tag',
   'resources',
-])
+]
 
-function flattenObject(obj, prefix = '') {
-  const result = {}
-  for (const [key, value] of Object.entries(obj || {})) {
-    const path = prefix ? `${prefix}.${key}` : key
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      Object.assign(result, flattenObject(value, path))
-    } else {
-      result[path] = String(value ?? '')
-    }
+function normalizePath(filePath = '') {
+  return filePath.replace(/\\/g, '/').replace(/^\//, '')
+}
+
+function filterMonitoredFiles(changedFiles = [], folderPath = '') {
+  const normalizedFolder = normalizePath(folderPath)
+  return [...new Set(changedFiles.map(normalizePath))].filter((file) => {
+    if (!normalizedFolder) return true
+    return file === normalizedFolder || file.startsWith(`${normalizedFolder}/`)
+  })
+}
+
+function isYamlFile(filePath) {
+  return filePath.endsWith('.yaml') || filePath.endsWith('.yml')
+}
+
+function isCriticalField(fieldPath = '') {
+  return CRITICAL_FIELDS.some((field) => fieldPath.toLowerCase().includes(field.toLowerCase()))
+}
+
+function inferFieldPath(filePath) {
+  const segments = normalizePath(filePath).split('/')
+  const fileName = segments[segments.length - 1] || filePath
+  try {
+    yaml.load(`${fileName}: true`)
+  } catch {
+    return fileName
   }
-  return result
+  return fileName
 }
 
-function determineChangeType(oldVal, newVal) {
-  const oldNum = parseFloat(oldVal)
-  const newNum = parseFloat(newVal)
-  if (!Number.isNaN(oldNum) && !Number.isNaN(newNum)) {
-    if (newNum > oldNum) return 'increase'
-    if (newNum < oldNum) return 'decrease'
-    return 'modified'
+function createChange(file, changeType) {
+  const fieldPath = inferFieldPath(file)
+  return {
+    file,
+    fieldPath,
+    oldValue: changeType === 'added' ? '' : 'unknown',
+    newValue: changeType === 'removed' ? '' : 'unknown',
+    changeType,
+    isCriticalField: isCriticalField(fieldPath) || isCriticalField(file),
   }
-  return 'modified'
 }
 
-function isCritical(fieldPath) {
-  return fieldPath.split('.').some((part) => CRITICAL_FIELDS.has(part))
-}
-
-function extractFilesFromDiff(rawDiff) {
-  const fileBlocks = []
-  const segments = rawDiff.split(/^diff --git /m).filter(Boolean)
-
-  for (const segment of segments) {
-    const lines = segment.split('\n')
-    const fileMatch = lines[0].match(/a\/.+ b\/(.+)/)
-    if (!fileMatch) continue
-    const filePath = fileMatch[1].trim()
-
-    const oldLines = []
-    const newLines = []
-    let inHunk = false
-
-    for (const line of lines) {
-      if (line.startsWith('@@')) {
-        inHunk = true
-        continue
-      }
-      if (!inHunk) continue
-      if (line.startsWith('-') && !line.startsWith('---')) oldLines.push(line.slice(1))
-      else if (line.startsWith('+') && !line.startsWith('+++')) newLines.push(line.slice(1))
-      else if (!line.startsWith('\\')) {
-        oldLines.push(line)
-        newLines.push(line)
-      }
-    }
-
-    fileBlocks.push({ filePath, oldContent: oldLines.join('\n'), newContent: newLines.join('\n') })
-  }
-
-  return fileBlocks
-}
-
-function parseSemanticChanges(rawDiff) {
+function parseSemanticChanges(commits = [], monitoredFiles = []) {
+  const monitoredSet = new Set(monitoredFiles.map(normalizePath))
   const changes = []
-  const fileBlocks = extractFilesFromDiff(rawDiff)
 
-  for (const { filePath, oldContent, newContent } of fileBlocks) {
-    if (!filePath.endsWith('.yaml') && !filePath.endsWith('.yml')) continue
-
-    let oldObj
-    let newObj
-    try {
-      oldObj = yaml.load(oldContent) || {}
-    } catch {
-      oldObj = {}
-    }
-    try {
-      newObj = yaml.load(newContent) || {}
-    } catch {
-      newObj = {}
+  for (const commit of commits || []) {
+    for (const file of commit.added || []) {
+      const normalized = normalizePath(file)
+      if (monitoredSet.has(normalized) && isYamlFile(normalized)) {
+        changes.push(createChange(normalized, 'added'))
+      }
     }
 
-    const oldFlat = flattenObject(oldObj)
-    const newFlat = flattenObject(newObj)
-    const allKeys = new Set([...Object.keys(oldFlat), ...Object.keys(newFlat)])
+    for (const file of commit.modified || []) {
+      const normalized = normalizePath(file)
+      if (monitoredSet.has(normalized) && isYamlFile(normalized)) {
+        changes.push(createChange(normalized, 'modified'))
+      }
+    }
 
-    for (const key of allKeys) {
-      const oldVal = oldFlat[key]
-      const newVal = newFlat[key]
-
-      if (oldVal === newVal) continue
-
-      let changeType
-      if (oldVal === undefined) changeType = 'added'
-      else if (newVal === undefined) changeType = 'removed'
-      else changeType = determineChangeType(oldVal, newVal)
-
-      changes.push({
-        file: filePath,
-        fieldPath: key,
-        oldValue: oldVal ?? '',
-        newValue: newVal ?? '',
-        changeType,
-        isCriticalField: isCritical(key),
-      })
+    for (const file of commit.removed || []) {
+      const normalized = normalizePath(file)
+      if (monitoredSet.has(normalized) && isYamlFile(normalized)) {
+        changes.push(createChange(normalized, 'removed'))
+      }
     }
   }
 
   return changes
 }
 
-function filterMonitoredFiles(changedFiles, folderPath) {
-  const normalized = folderPath.replace(/^\//, '')
-  return changedFiles.filter((file) => file.replace(/^\//, '').startsWith(normalized))
+function buildRawDiff(commits = [], monitoredFiles = []) {
+  const monitoredSet = new Set(monitoredFiles.map(normalizePath))
+  const lines = []
+
+  for (const commit of commits || []) {
+    const files = [...(commit.added || []), ...(commit.modified || []), ...(commit.removed || [])]
+    for (const file of files) {
+      const normalized = normalizePath(file)
+      if (monitoredSet.has(normalized)) {
+        lines.push(`commit ${commit.id || ''}`)
+        lines.push(`file ${normalized}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
 }
 
-module.exports = { parseSemanticChanges, filterMonitoredFiles }
+module.exports = {
+  buildRawDiff,
+  filterMonitoredFiles,
+  parseSemanticChanges,
+}

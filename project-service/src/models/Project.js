@@ -36,7 +36,7 @@ const projectSchema = new mongoose.Schema(
     argocdToken: { type: String, required: true },
     kubernetesToken: { type: String, default: null },
     kubernetesApiUrl: { type: String, default: null },
-    webhookSecret: { type: String, required: true },
+    webhookSecret: { type: String, required: true, select: false },
     githubWebhookId: { type: Number, default: null },
     status: {
       type: String,

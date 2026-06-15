@@ -1,139 +1,144 @@
 const express = require('express')
-const crypto = require('crypto')
 const axios = require('axios')
 const Event = require('../models/Event')
-const { parseSemanticChanges, filterMonitoredFiles } = require('../services/diffParser')
-const { pauseSync } = require('../services/argocd')
+const { verifyGithubSignature } = require('../services/hmac')
+const { buildRawDiff, filterMonitoredFiles, parseSemanticChanges } = require('../services/diffParser')
+const { pauseArgocdSync } = require('../services/argocd')
+const { triggerAnalysis } = require('../services/analysisClient')
+const { BadRequestError, NotFoundError, UnauthorizedError } = require('../utils/errors')
+const logger = require('../utils/logger')
 
 const router = express.Router()
 
-function buildRawDiff(commits, monitoredFiles) {
-  const lines = []
-  for (const commit of commits) {
-    for (const file of commit.modified || []) {
-      if (monitoredFiles.includes(file)) {
-        lines.push(`diff --git a/${file} b/${file}`)
-        lines.push(`--- a/${file}`)
-        lines.push(`+++ b/${file}`)
-        if (commit.patch) lines.push(commit.patch)
-      }
-    }
-  }
-  return lines.join('\n')
+function normalizeProject(projectResponse) {
+  return projectResponse.data.project || projectResponse.data
 }
 
-async function triggerAnalysis(eventId, projectId) {
-  try {
-    await Event.findByIdAndUpdate(eventId, {
-      status: 'analyzing',
-      analysisStartedAt: new Date(),
-    })
-
-    await axios.post(
-      `${process.env.ANALYSIS_SERVICE_URL}/internal/analyze`,
-      { eventId, projectId },
-      {
-        headers: { 'x-internal-secret': process.env.INTERNAL_SECRET },
-        timeout: 10000,
-      }
-    )
-  } catch (error) {
-    console.error(`[watcher] Failed to trigger analysis for event ${eventId}:`, error.message)
-    await Event.findByIdAndUpdate(eventId, { status: 'error' })
-  }
-}
-
-router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res) => {
-  const { projectId } = req.params
-
-  let project
+async function fetchProject(projectId) {
   try {
     const response = await axios.get(`${process.env.PROJECT_SERVICE_URL}/internal/projects/${projectId}`, {
       headers: { 'x-internal-secret': process.env.INTERNAL_SECRET },
       timeout: 5000,
     })
-    project = response.data.project
+    return normalizeProject(response)
   } catch (error) {
-    console.error(`[watcher] Could not fetch project ${projectId}:`, error.message)
-    return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
+    throw new NotFoundError('Project not found')
   }
+}
 
-  const signature = req.headers['x-hub-signature-256']
-  if (!signature) {
-    return res.status(401).json({ error: 'Unauthorized', message: 'Missing webhook signature.' })
-  }
+function collectChangedFiles(commits = []) {
+  return [
+    ...new Set(
+      (commits || []).flatMap((commit) => [
+        ...(commit.added || []),
+        ...(commit.modified || []),
+        ...(commit.removed || []),
+      ])
+    ),
+  ]
+}
 
-  const expected = `sha256=${crypto
-    .createHmac('sha256', project.webhookSecret)
-    .update(req.body)
-    .digest('hex')}`
+function getProjectOwnerId(project) {
+  return project.ownerId || project.userId || project.createdBy || project.createdById || ''
+}
 
-  let signaturesMatch = false
-  try {
-    signaturesMatch = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
-  } catch {
-    signaturesMatch = false
-  }
-
-  if (!signaturesMatch) {
-    return res.status(401).json({ error: 'Unauthorized', message: 'Invalid webhook signature.' })
-  }
-
-  let payload
-  try {
-    payload = JSON.parse(req.body.toString('utf8'))
-  } catch {
-    return res.status(400).json({ error: 'BadRequest', message: 'Invalid JSON payload.' })
-  }
-
-  const pushedBranch = (payload.ref || '').replace('refs/heads/', '')
-  if (pushedBranch !== project.branch) {
-    return res.status(200).json({ message: `Branch '${pushedBranch}' is not monitored. Skipping.` })
-  }
-
-  const commits = payload.commits || []
-  const allChangedFiles = commits.flatMap((commit) => [...(commit.added || []), ...(commit.modified || []), ...(commit.removed || [])])
-  const monitoredChangedFiles = filterMonitoredFiles(allChangedFiles, project.folderPath)
-  if (monitoredChangedFiles.length === 0) {
-    return res.status(200).json({ message: 'No files changed in the monitored folder. Skipping.' })
-  }
-
-  const latestCommit = commits[commits.length - 1] || {}
-  const commitSha = payload.after || latestCommit.id || ''
-  const commitMessage = latestCommit.message || ''
-  const commitUrl = latestCommit.url || ''
-  const author = latestCommit.author?.name || payload.pusher?.name || ''
-  const authorEmail = latestCommit.author?.email || ''
-  const rawDiff = buildRawDiff(commits, monitoredChangedFiles)
-  const semanticChanges = parseSemanticChanges(rawDiff)
-
-  const argoResult = await pauseSync(project.argocdUrl, project.argocdToken, project.argocdAppName)
-
-  const event = new Event({
-    projectId: project._id,
-    projectName: project.name,
-    commitSha,
-    commitMessage,
-    commitUrl,
-    author,
-    authorEmail,
-    changedFiles: allChangedFiles,
-    monitoredChangedFiles,
-    semanticChanges,
-    rawDiff,
-    status: 'detected',
-    argocdPaused: argoResult.success,
-    argocdPauseError: argoResult.error,
+async function updateArgocdPauseResult(eventId, pausePromise) {
+  const result = await pausePromise
+  await Event.findByIdAndUpdate(eventId, {
+    argocdPaused: result.success,
+    argocdPauseError: result.error || '',
   })
+}
 
-  await event.save()
+async function startAnalysis(eventId, projectId) {
+  try {
+    await triggerAnalysis(eventId, projectId)
+    await Event.findByIdAndUpdate(eventId, {
+      status: 'analyzing',
+      analysisStartedAt: new Date(),
+    })
+  } catch (error) {
+    logger.error(`Failed to trigger analysis for event ${eventId}: ${error.message}`)
+    await Event.findByIdAndUpdate(eventId, { status: 'error' })
+  }
+}
 
-  res.status(200).json({
-    message: 'Change detected. Analysis triggered.',
-    eventId: event._id.toString(),
-  })
+router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) => {
+  try {
+    const { projectId } = req.params
+    const rawBody = req.body
+    const signature = req.headers['x-hub-signature-256']
 
-  triggerAnalysis(event._id.toString(), project._id.toString())
+    if (!signature) {
+      throw new UnauthorizedError('Missing webhook signature')
+    }
+
+    const project = await fetchProject(projectId)
+
+    if (!verifyGithubSignature(rawBody, signature, project.webhookSecret)) {
+      throw new UnauthorizedError('Invalid webhook signature')
+    }
+
+    let payload
+    try {
+      payload = JSON.parse(rawBody.toString('utf8'))
+    } catch {
+      throw new BadRequestError('Invalid JSON payload')
+    }
+
+    if (payload.ref !== `refs/heads/${project.branch}`) {
+      return res.status(200).json({ monitored: false, message: 'Branch not monitored' })
+    }
+
+    const commits = payload.commits || []
+    const changedFiles = collectChangedFiles(commits)
+    const monitoredChangedFiles = filterMonitoredFiles(changedFiles, project.folderPath || '')
+
+    if (monitoredChangedFiles.length === 0) {
+      return res.status(200).json({ monitored: false, message: 'No monitored files changed' })
+    }
+
+    const latestCommit = commits[commits.length - 1] || payload.head_commit || {}
+    const semanticChanges = parseSemanticChanges(commits, monitoredChangedFiles)
+    const rawDiff = buildRawDiff(commits, monitoredChangedFiles)
+
+    const pausePromise = pauseArgocdSync(project.argocdUrl, project.argocdToken, project.argocdAppName)
+
+    const event = await Event.create({
+      projectId: project._id || project.id || projectId,
+      projectName: project.name || project.projectName || 'Unknown project',
+      projectOwnerId: getProjectOwnerId(project),
+      commitSha: payload.after || latestCommit.id || 'unknown',
+      commitMessage: latestCommit.message || '',
+      commitUrl: payload.head_commit?.url || latestCommit.url || payload.compare || '',
+      author: latestCommit.author?.name || payload.pusher?.name || '',
+      authorEmail: latestCommit.author?.email || payload.pusher?.email || '',
+      changedFiles,
+      monitoredChangedFiles,
+      semanticChanges,
+      rawDiff,
+      status: 'detected',
+    })
+
+    res.status(200).json({
+      message: 'Analysis triggered',
+      eventId: event._id.toString(),
+      monitored: true,
+    })
+
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          updateArgocdPauseResult(event._id, pausePromise),
+          startAnalysis(event._id.toString(), String(project._id || project.id || projectId)),
+        ])
+      } catch (error) {
+        logger.error(`Webhook background work failed for event ${event._id}: ${error.message}`)
+      }
+    })
+  } catch (error) {
+    next(error)
+  }
 })
 
 module.exports = router

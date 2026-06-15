@@ -1,39 +1,61 @@
 const express = require('express')
+const Joi = require('joi')
 const Event = require('../models/Event')
 const { checkInternal } = require('../middleware/checkInternal')
+const validate = require('../middleware/validate')
+const { NotFoundError } = require('../utils/errors')
 
 const router = express.Router()
 
+const statusSchema = Joi.object({
+  status: Joi.string().valid('detected', 'analyzing', 'pending_approval', 'approved', 'rejected', 'error').required(),
+  reportBlobUrl: Joi.string().uri().optional(),
+})
+
 router.use(checkInternal)
 
-router.patch('/events/:id/status', async (req, res) => {
+router.patch('/events/:id/status', validate(statusSchema), async (req, res, next) => {
   try {
     const { status, reportBlobUrl } = req.body
-    const validStatuses = ['detected', 'analyzing', 'pending_approval', 'approved', 'rejected', 'error']
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'ValidationError', message: `Invalid status: ${status}` })
+    const update = { status }
+
+    if (reportBlobUrl) {
+      update.reportBlobUrl = reportBlobUrl
     }
 
-    const update = { status }
-    if (reportBlobUrl) update.reportBlobUrl = reportBlobUrl
-    if (status === 'approved' || status === 'rejected') update.resolvedAt = new Date()
+    if (status === 'analyzing') {
+      update.analysisStartedAt = new Date()
+    }
 
-    const event = await Event.findByIdAndUpdate(req.params.id, update, { new: true }).lean()
-    if (!event) return res.status(404).json({ error: 'NotFound', message: 'Event not found.' })
+    if (status === 'approved' || status === 'rejected') {
+      update.resolvedAt = new Date()
+    }
+
+    const event = await Event.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+      runValidators: true,
+    }).lean()
+
+    if (!event) {
+      throw new NotFoundError('Event not found')
+    }
 
     res.json({ event })
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    next(error)
   }
 })
 
-router.get('/events/:id', async (req, res) => {
+router.get('/events/:id', async (req, res, next) => {
   try {
     const event = await Event.findById(req.params.id).lean()
-    if (!event) return res.status(404).json({ error: 'NotFound', message: 'Event not found.' })
+    if (!event) {
+      throw new NotFoundError('Event not found')
+    }
+
     res.json({ event })
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    next(error)
   }
 })
 

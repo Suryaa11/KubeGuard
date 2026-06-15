@@ -1,9 +1,12 @@
+const crypto = require('crypto')
 const router = require('express').Router()
 const axios = require('axios')
 const Project = require('../models/Project')
 const { validate, projectSchema, updateSchema } = require('../middleware/validate')
 const { encrypt } = require('../utils/encrypt')
 const { registerWebhook, deleteWebhook } = require('../services/githubWebhook')
+const { ForbiddenError, NotFoundError } = require('../utils/errors')
+const logger = require('../utils/logger')
 
 function getUser(req) {
   return {
@@ -17,22 +20,35 @@ function isAdmin(roles) {
   return roles.includes('Admin')
 }
 
-async function findAccessibleProject(req, id) {
+async function getProjectForUser(req, id) {
   const { userId, roles } = getUser(req)
   const project = await Project.findById(id)
-  if (!project) return null
-  if (isAdmin(roles) || project.createdBy === userId) return project
-  return null
+  if (!project) throw new NotFoundError('Project not found.')
+  if (!isAdmin(roles) && project.createdBy !== userId) {
+    throw new ForbiddenError('You do not have access to this project.')
+  }
+  return project
+}
+
+async function checkPrometheus(prometheusUrl) {
+  try {
+    await axios.get(`${prometheusUrl}/api/v1/status/runtimeinfo`, { timeout: 5000 })
+    return true
+  } catch (error) {
+    return false
+  }
 }
 
 router.post('/', validate(projectSchema), async (req, res, next) => {
   try {
     const { userId, email } = getUser(req)
+    const warnings = []
     const existing = await Project.findOne({
       githubRepoUrl: req.body.githubRepoUrl,
       branch: req.body.branch,
       folderPath: req.body.folderPath,
     })
+
     if (existing) {
       return res.status(409).json({
         error: 'DuplicateProject',
@@ -40,15 +56,12 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
       })
     }
 
-    let prometheusAvailable = false
-    try {
-      await axios.get(`${req.body.prometheusUrl}/api/v1/status/runtimeinfo`, { timeout: 5000 })
-      prometheusAvailable = true
-    } catch (error) {
-      prometheusAvailable = false
+    const prometheusAvailable = await checkPrometheus(req.body.prometheusUrl)
+    if (!prometheusAvailable) {
+      warnings.push('Prometheus check failed. Project was still saved.')
     }
 
-    const webhookSecret = require('crypto').randomBytes(32).toString('hex')
+    const webhookSecret = crypto.randomBytes(32).toString('hex')
     const project = new Project({
       ...req.body,
       createdBy: userId,
@@ -59,19 +72,16 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
       webhookSecret,
     })
 
-    const warnings = []
-    try {
-      project.githubWebhookId = await registerWebhook(project.githubRepoUrl, webhookSecret, project._id.toString())
-    } catch (error) {
-      warnings.push('GitHub webhook registration failed. Project was still saved.')
+    const webhookResult = await registerWebhook(project.githubRepoUrl, project._id.toString(), webhookSecret)
+    if (webhookResult.success) {
+      project.githubWebhookId = webhookResult.webhookId
+    } else {
+      project.githubWebhookId = null
+      warnings.push(`GitHub webhook registration failed. Project was still saved. ${webhookResult.error}`)
     }
 
     await project.save()
-
-    return res.status(201).json({
-      project: project.toSafeJSON(),
-      warnings,
-    })
+    return res.status(201).json({ project: project.toSafeJSON(), warnings })
   } catch (error) {
     return next(error)
   }
@@ -80,9 +90,39 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const { userId, roles } = getUser(req)
+    const page = Math.max(Number(req.query.page) || 1, 1)
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
     const query = isAdmin(roles) ? {} : { createdBy: userId }
-    const projects = await Project.find(query).sort({ createdAt: -1 })
-    return res.json({ projects: projects.map((project) => project.toSafeJSON()) })
+
+    if (req.query.status) {
+      query.status = req.query.status
+    }
+
+    const [projects, total] = await Promise.all([
+      Project.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+      Project.countDocuments(query),
+    ])
+
+    return res.json({
+      projects: projects.map((project) => project.toSafeJSON()),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.get('/:id/status', async (req, res, next) => {
+  try {
+    const project = await getProjectForUser(req, req.params.id)
+    return res.json({
+      projectId: project._id,
+      name: project.name,
+      status: project.status,
+      prometheusAvailable: project.prometheusAvailable,
+      lastEventAt: project.lastEventAt,
+      githubWebhookId: project.githubWebhookId,
+    })
   } catch (error) {
     return next(error)
   }
@@ -90,11 +130,23 @@ router.get('/', async (req, res, next) => {
 
 router.get('/:id', async (req, res, next) => {
   try {
-    const project = await findAccessibleProject(req, req.params.id)
-    if (!project) {
-      return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
-    }
+    const project = await getProjectForUser(req, req.params.id)
     return res.json({ project: project.toSafeJSON() })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const project = await getProjectForUser(req, req.params.id)
+    const result = await deleteWebhook(project.githubRepoUrl, project.githubWebhookId)
+    if (!result.success) {
+      logger.warn(`GitHub webhook deletion failed for project ${project._id}: ${result.error}`)
+    }
+
+    await Project.deleteOne({ _id: project._id })
+    return res.status(204).send()
   } catch (error) {
     return next(error)
   }
@@ -102,15 +154,15 @@ router.get('/:id', async (req, res, next) => {
 
 router.put('/:id', validate(updateSchema), async (req, res, next) => {
   try {
-    const project = await findAccessibleProject(req, req.params.id)
-    if (!project) {
-      return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
-    }
+    const project = await getProjectForUser(req, req.params.id)
+    const warnings = []
 
-    const immutableFields = ['githubRepoUrl', 'branch', 'folderPath']
-    immutableFields.forEach((field) => {
-      delete req.body[field]
-    })
+    if (req.body.prometheusUrl && req.body.prometheusUrl !== project.prometheusUrl) {
+      project.prometheusAvailable = await checkPrometheus(req.body.prometheusUrl)
+      if (!project.prometheusAvailable) {
+        warnings.push('Prometheus check failed. Project was still updated.')
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'argocdToken')) {
       req.body.argocdToken = encrypt(req.body.argocdToken)
@@ -121,42 +173,7 @@ router.put('/:id', validate(updateSchema), async (req, res, next) => {
 
     Object.assign(project, req.body)
     await project.save()
-    return res.json({ project: project.toSafeJSON() })
-  } catch (error) {
-    return next(error)
-  }
-})
-
-router.delete('/:id', async (req, res, next) => {
-  try {
-    const project = await findAccessibleProject(req, req.params.id)
-    if (!project) {
-      return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
-    }
-
-    await deleteWebhook(project.githubRepoUrl, project.githubWebhookId)
-    await Project.deleteOne({ _id: project._id })
-
-    return res.json({ success: true, message: 'Project deleted and GitHub webhook removed.' })
-  } catch (error) {
-    return next(error)
-  }
-})
-
-router.get('/:id/status', async (req, res, next) => {
-  try {
-    const project = await findAccessibleProject(req, req.params.id)
-    if (!project) {
-      return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
-    }
-
-    return res.json({
-      projectId: project._id,
-      name: project.name,
-      status: project.status,
-      prometheusAvailable: project.prometheusAvailable,
-      lastEventAt: project.lastEventAt,
-    })
+    return res.json({ project: project.toSafeJSON(), warnings })
   } catch (error) {
     return next(error)
   }

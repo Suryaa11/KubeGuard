@@ -1,149 +1,89 @@
 const axios = require('axios')
-const { v4: uuidv4 } = require('uuid')
+const logger = require('../utils/logger')
 
-const RETRY_DELAYS = [30000, 60000, 120000]
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+const FALLBACK_REPORT = {
+  riskScore: 'medium',
+  riskReason: 'AI unavailable - manual review required',
+  prediction: 'Unable to predict deployment impact because AI analysis was unavailable.',
+  recommendation: 'approve_with_caution',
+  reportMarkdown: '## Manual Review Required\n\nAI analysis unavailable. Review the Kubernetes change and cluster metrics before deciding.',
 }
 
-async function withRetry(operation) {
-  let lastError
-  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
-    try {
-      return await operation()
-    } catch (error) {
-      lastError = error
-      if (attempt === RETRY_DELAYS.length) break
-      await sleep(RETRY_DELAYS[attempt])
-    }
+function extractText(data) {
+  return (
+    data?.choices?.[0]?.message?.content ??
+    data?.content?.[0]?.text ??
+    data?.output_text ??
+    ''
+  )
+}
+
+function extractJsonObject(text) {
+  if (!text || typeof text !== 'string') return null
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1] : text
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+
+  try {
+    return JSON.parse(candidate.slice(start, end + 1))
+  } catch (error) {
+    logger.warn(`AI JSON parse failed: ${error.message}`)
+    return null
   }
-  throw lastError
 }
 
-function stripJsonFences(text) {
-  if (!text) return ''
-  return text
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```$/i, '')
-    .trim()
+function normalizeRiskScore(value) {
+  const riskScore = String(value || '').toLowerCase()
+  return ['low', 'medium', 'high', 'critical'].includes(riskScore) ? riskScore : 'medium'
 }
 
-function buildPrompt(event, project, metrics) {
-  return [
-    'You are KubeGuard AI, a Kubernetes deployment risk analyst.',
-    'Return ONLY valid JSON with the following keys:',
-    '{ "riskScore": number, "recommendation": string, "changesSummary": string, "reasoning": string, "topRisks": string[] }',
-    '',
-    `Project: ${project.name}`,
-    `Repository: ${project.githubRepoUrl}`,
-    `Branch: ${project.branch}`,
-    `ArgoCD App: ${project.argocdAppName}`,
-    `Event ID: ${event._id}`,
-    `Commit SHA: ${event.commitSha}`,
-    `Commit Message: ${event.commitMessage || ''}`,
-    `Changed Files: ${(event.changedFiles || []).join(', ') || 'none'}`,
-    `Semantic Changes: ${JSON.stringify(event.semanticChanges || [])}`,
-    `Live Metrics: ${JSON.stringify(metrics.live || {})}`,
-    `Historical Peak: ${JSON.stringify(metrics.peak || {})}`,
-    '',
-    'Focus on production risk, resource changes, traffic impact, and rollback safety.',
-  ].join('\n')
+function normalizeRecommendation(value) {
+  const recommendation = String(value || '').toLowerCase()
+  return ['approve', 'approve_with_caution', 'reject'].includes(recommendation)
+    ? recommendation
+    : 'approve_with_caution'
 }
 
-function fallbackReport(event, project, metrics) {
-  const criticalChanges = Array.isArray(event.semanticChanges)
-    ? event.semanticChanges.filter((change) => change.isCriticalField).length
-    : 0
-  const riskScore = Math.min(95, 35 + criticalChanges * 10 + (metrics.live?.available ? 0 : 10))
+function normalizeReport(parsed) {
+  if (!parsed) return { ...FALLBACK_REPORT }
 
   return {
-    reportId: uuidv4(),
-    riskScore,
-    recommendation: riskScore >= 70 ? 'Reject until the change is reviewed by an admin.' : 'Approve after a manual sanity check.',
-    changesSummary: {
-      changedFiles: event.changedFiles || [],
-      semanticChangeCount: Array.isArray(event.semanticChanges) ? event.semanticChanges.length : 0,
-      criticalChangeCount: criticalChanges,
-    },
-    reasoning: 'Generated fallback report because the AI response could not be parsed.',
-    topRisks: ['AI response parsing failed', metrics.live?.available ? 'Metrics were partially available' : 'Metrics were unavailable'],
-    metricsAvailable: Boolean(metrics.live?.available || metrics.peak?.available),
+    riskScore: normalizeRiskScore(parsed.riskScore),
+    riskReason: parsed.riskReason || parsed.reasoning || FALLBACK_REPORT.riskReason,
+    prediction: parsed.prediction || FALLBACK_REPORT.prediction,
+    recommendation: normalizeRecommendation(parsed.recommendation),
+    reportMarkdown: parsed.reportMarkdown || FALLBACK_REPORT.reportMarkdown,
   }
 }
 
-async function requestAnalysis(event, project, metrics) {
-  const apiUrl = process.env.AI_API_URL
-  const apiKey = process.env.AI_API_KEY
-  const model = process.env.AI_MODEL || 'gpt-4o-mini'
-
-  if (!apiUrl || !apiKey) {
-    return fallbackReport(event, project, metrics)
-  }
-
-  const payload = buildPrompt(event, project, metrics)
-
-  return withRetry(async () => {
-    let response
-    if (/anthropic/i.test(apiUrl)) {
-      response = await axios.post(
-        apiUrl,
-        {
-          model,
-          max_tokens: 1200,
-          messages: [{ role: 'user', content: payload }],
+async function generateReport(prompt) {
+  try {
+    const response = await axios.post(
+      process.env.AI_API_URL,
+      {
+        model: process.env.AI_MODEL,
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.AI_API_KEY}`,
+          'Content-Type': 'application/json',
         },
-        {
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          timeout: 60000,
-        }
-      )
-    } else {
-      response = await axios.post(
-        apiUrl,
-        {
-          model,
-          messages: [{ role: 'user', content: payload }],
-          temperature: 0.2,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'content-type': 'application/json',
-          },
-          timeout: 60000,
-        }
-      )
-    }
-
-    const text =
-      response.data?.choices?.[0]?.message?.content ??
-      response.data?.content?.[0]?.text ??
-      response.data?.output_text ??
-      ''
-
-    const cleaned = stripJsonFences(typeof text === 'string' ? text : JSON.stringify(text))
-    try {
-      const parsed = JSON.parse(cleaned)
-      return {
-        reportId: parsed.reportId || uuidv4(),
-        riskScore: Number(parsed.riskScore ?? 50),
-        recommendation: parsed.recommendation || 'Review the change carefully before approving.',
-        changesSummary: parsed.changesSummary ?? {
-          summary: 'AI-generated report',
-        },
-        reasoning: parsed.reasoning || '',
-        topRisks: parsed.topRisks || [],
-        metricsAvailable: Boolean(metrics.live?.available || metrics.peak?.available),
+        timeout: 60000,
       }
-    } catch (error) {
-      return fallbackReport(event, project, metrics)
-    }
-  })
+    )
+
+    const text = extractText(response.data)
+    return normalizeReport(extractJsonObject(text))
+  } catch (error) {
+    logger.warn(`AI API unavailable, using fallback report: ${error.message}`)
+    return { ...FALLBACK_REPORT }
+  }
 }
 
-module.exports = { requestAnalysis, stripJsonFences, withRetry }
+module.exports = { generateReport, extractJsonObject, normalizeReport }

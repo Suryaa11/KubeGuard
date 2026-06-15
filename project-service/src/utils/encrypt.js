@@ -4,8 +4,8 @@ const ALGORITHM = 'aes-256-gcm'
 
 function getKey() {
   const raw = process.env.ENCRYPTION_KEY || ''
-  if (raw.length < 32) throw new Error('ENCRYPTION_KEY must be at least 32 characters')
-  return Buffer.from(raw.slice(0, 32), 'utf8')
+  if (raw.length !== 32) throw new Error('ENCRYPTION_KEY must be exactly 32 characters')
+  return Buffer.from(raw, 'utf8')
 }
 
 function encrypt(text) {

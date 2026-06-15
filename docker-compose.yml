@@ -1,184 +1,69 @@
 version: '3.9'
 
-# ============================================================
-#  KubeGuard AI — Docker Compose (Single VM Testing)
-#  Run: docker compose up --build -d
-# ============================================================
-
 services:
-
-  # ── Frontend ───────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
-        VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
-        VITE_AZURE_REDIRECT_URI: "https://20.235.136.76/auth/callback"
-        VITE_API_BASE_URL: "http://20.235.136.76:3000"
+  mongodb:
+    image: mongo:7.0
     ports:
-      - "80:80"
-      - "443:443"
+      - "27017:27017"
     volumes:
-      - /etc/nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      gateway:
-        condition: service_started
-    restart: unless-stopped
-    networks:
-      - kubeguard-net
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # ── API Gateway ────────────────────────────────────────────
   gateway:
     build: ./gateway
     ports:
       - "3000:3000"
-    environment:
-      NODE_ENV: development
-      SERVICE_NAME: gateway
-      GATEWAY_PORT: 3000
-      AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
-      AZURE_CLIENT_ID: "1374918d-6c4f-4d74-a954-e0e83fbca481"
-      # CORS — must match the origin the browser sends
-      # Since frontend is served on port 443 (HTTPS), origin is https://IP
-      FRONTEND_URL: "https://20.235.136.76"
-      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
-      PROJECT_SERVICE_URL: "http://project-service:3001"
-      WATCHER_SERVICE_URL: "http://watcher-service:3002"
-      ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
-      NOTIFICATION_SERVICE_URL: "http://notification-service:3004"
+    env_file: ./gateway/.env.docker
+    depends_on:
+      - project-service
+      - watcher-service
+      - analysis-service
+      - notification-service
     restart: unless-stopped
-    networks:
-      - kubeguard-net
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
 
-  # ── Project Service ────────────────────────────────────────
   project-service:
     build: ./project-service
     ports:
       - "3001:3001"
-    environment:
-      NODE_ENV: development
-      SERVICE_NAME: project-service
-      PROJECT_PORT: 3001
-      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
-      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
-      # FIX: ENCRYPTION_KEY must be EXACTLY 32 characters.
-      # Previous value "KubeGuard-Encrypt-Key-32chars!!" was 31 chars — caused 500 errors.
-      # This value is exactly 32 chars (verified):
-      ENCRYPTION_KEY: "KubeGuard-EncryptKey-32chars!!XY"
-      GITHUB_TOKEN: "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"
-      GATEWAY_PUBLIC_URL: "http://20.235.136.76:3000"
-      WATCHER_SERVICE_URL: "http://watcher-service:3002"
+    env_file: ./project-service/.env.docker
+    depends_on:
+      mongodb:
+        condition: service_healthy
     restart: unless-stopped
-    networks:
-      - kubeguard-net
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 25s
 
-  # ── Watcher Service ────────────────────────────────────────
   watcher-service:
     build: ./watcher-service
     ports:
       - "3002:3002"
-    environment:
-      NODE_ENV: development
-      SERVICE_NAME: watcher-service
-      WATCHER_PORT: 3002
-      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
-      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
-      PROJECT_SERVICE_URL: "http://project-service:3001"
-      ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
+    env_file: ./watcher-service/.env.docker
     depends_on:
-      project-service:
+      mongodb:
         condition: service_healthy
     restart: unless-stopped
-    networks:
-      - kubeguard-net
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 25s
 
-  # ── Analysis Service ───────────────────────────────────────
   analysis-service:
     build: ./analysis-service
     ports:
       - "3003:3003"
-    environment:
-      NODE_ENV: development
-      SERVICE_NAME: analysis-service
-      ANALYSIS_PORT: 3003
-      MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
-      INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
-      AI_API_URL: "https://api.anthropic.com/v1/messages"
-      AI_API_KEY: "YOUR_AI_API_KEY_HERE"
-      AI_MODEL: "claude-haiku-4-5"
-      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=demosstorages1;AccountKey=rHfa5izhmVhcR7Bu5ehuEZbFPzHN9P/x/byBeNGhj++PonqxhT2CfidNt1dHi/ZgouXMJFZYvr4s+AStFnhEQw==;EndpointSuffix=core.windows.net"
-      AZURE_STORAGE_CONTAINER: "reports"
-      SERVICE_BUS_CONNECTION_STRING: "YOUR_SERVICE_BUS_CONNECTION_STRING_HERE"
-      SERVICE_BUS_QUEUE: "report-ready"
-      PROJECT_SERVICE_URL: "http://project-service:3001"
-      WATCHER_SERVICE_URL: "http://watcher-service:3002"
-      ADMIN_EMAILS: "ksurya112003@gmail.com"
+    env_file: ./analysis-service/.env.docker
     depends_on:
-      project-service:
-        condition: service_healthy
-      watcher-service:
+      mongodb:
         condition: service_healthy
     restart: unless-stopped
-    networks:
-      - kubeguard-net
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
-  # ── Notification Service ───────────────────────────────────
-  # Uncomment when notification-service folder is built
-  # notification-service:
-  #   build: ./notification-service
-  #   ports:
-  #     - "3004:3004"
-  #   environment:
-  #     NODE_ENV: development
-  #     NOTIFICATION_PORT: 3004
-  #     MONGODB_URI: "mongodb+srv://mongodb:Admin123@mongodbapps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
-  #     INTERNAL_SECRET: "kube-guard-internal-secret-key-2024-vm-test"
-  #     NOTIFICATION_SECRET: "KubeGuard-Notif-Secret-Key32charsOK!"
-  #     SERVICE_BUS_CONNECTION_STRING: "YOUR_SERVICE_BUS_CONNECTION_STRING_HERE"
-  #     SERVICE_BUS_QUEUE: "report-ready"
-  #     EMAIL_FROM: "ksurya112003@gmail.com"
-  #     EMAIL_FROM_NAME: "KubeGuard AI"
-  #     SENDGRID_API_KEY: "YOUR_SENDGRID_KEY"
-  #     SMTP_HOST: "smtp.sendgrid.net"
-  #     SMTP_PORT: "587"
-  #     SMTP_USER: "apikey"
-  #     GATEWAY_PUBLIC_URL: "http://20.235.136.76:3000"
-  #     FRONTEND_URL: "https://20.235.136.76"
-  #     PROJECT_SERVICE_URL: "http://project-service:3001"
-  #     WATCHER_SERVICE_URL: "http://watcher-service:3002"
-  #     ANALYSIS_SERVICE_URL: "http://analysis-service:3003"
-  #   depends_on:
-  #     analysis-service:
-  #       condition: service_healthy
-  #   restart: unless-stopped
-  #   networks:
-  #     - kubeguard-net
+  notification-service:
+    build: ./notification-service
+    ports:
+      - "3004:3004"
+    env_file: ./notification-service/.env.docker
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
 
-networks:
-  kubeguard-net:
-    driver: bridge
+volumes:
+  mongo_data:

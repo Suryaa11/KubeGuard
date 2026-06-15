@@ -1,34 +1,63 @@
 const express = require('express')
 const Event = require('../models/Event')
+const { requireRole } = require('../middleware/checkRole')
+const { ForbiddenError, NotFoundError } = require('../utils/errors')
 
 const router = express.Router()
 
-router.get('/', async (req, res) => {
-  try {
-    const { projectId, status, page = 1, limit = 20 } = req.query
-    const query = {}
-    if (projectId) query.projectId = projectId
-    if (status) query.status = status
+router.use(requireRole('Admin', 'DevOpsEngineer'))
 
-    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10)
+function buildAccessQuery(req) {
+  if (req.user.isAdmin) {
+    return {}
+  }
+
+  return { projectOwnerId: req.user.id }
+}
+
+router.get('/', async (req, res, next) => {
+  try {
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1)
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100)
+    const query = buildAccessQuery(req)
+
+    if (req.query.projectId) query.projectId = req.query.projectId
+    if (req.query.status) query.status = req.query.status
+
+    const skip = (page - 1) * limit
     const [events, total] = await Promise.all([
-      Event.find(query).sort({ detectedAt: -1 }).skip(skip).limit(parseInt(limit, 10)).lean(),
+      Event.find(query).sort({ detectedAt: -1 }).skip(skip).limit(limit).lean(),
       Event.countDocuments(query),
     ])
 
-    res.json({ events, total, page: parseInt(page, 10), limit: parseInt(limit, 10) })
+    res.json({
+      events,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    })
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    next(error)
   }
 })
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req, res, next) => {
   try {
     const event = await Event.findById(req.params.id).lean()
-    if (!event) return res.status(404).json({ error: 'NotFound', message: 'Event not found.' })
+    if (!event) {
+      throw new NotFoundError('Event not found')
+    }
+
+    if (!req.user.isAdmin && event.projectOwnerId !== req.user.id) {
+      throw new ForbiddenError('You do not have access to this event')
+    }
+
     res.json({ event })
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    next(error)
   }
 })
 

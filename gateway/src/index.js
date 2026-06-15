@@ -1,14 +1,18 @@
 require('dotenv').config()
 const app = require('./app')
+const logger = require('./utils/logger')
 
-const PORT = process.env.GATEWAY_PORT || 3000
-app.listen(PORT, () => {
-  console.log(`[gateway] Running on port ${PORT}`)
-  console.log(`[gateway] Environment: ${process.env.NODE_ENV}`)
-  console.log(`[gateway] Frontend allowed: ${process.env.FRONTEND_URL}`)
+const port = process.env.GATEWAY_PORT
+
+const server = app.listen(port, () => {
+  logger.info(`Running on port ${port}`)
+  logger.info(`Environment: ${process.env.NODE_ENV}`)
 })
 
 process.on('SIGTERM', () => {
-  console.log('[gateway] SIGTERM received, shutting down gracefully')
-  process.exit(0)
+  logger.info('SIGTERM received, shutting down gracefully')
+  server.close(() => {
+    logger.info('HTTP server closed')
+    process.exit(0)
+  })
 })

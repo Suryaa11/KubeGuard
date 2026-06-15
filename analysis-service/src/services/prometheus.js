@@ -1,79 +1,96 @@
 const axios = require('axios')
 
-function buildApiUrl(prometheusUrl, path) {
-  return `${prometheusUrl.replace(/\/$/, '')}${path}`
+function emptyLiveMetrics() {
+  return {
+    available: false,
+    cpuUsagePercent: null,
+    memoryUsageMB: null,
+    activePodCount: null,
+    requestsPerSecond: null,
+    errorRatePercent: null,
+    p95LatencyMs: null,
+    queryTime: new Date().toISOString(),
+  }
 }
 
-async function queryPrometheus(prometheusUrl, query) {
+function emptyHistoricalPeak() {
+  return {
+    available: false,
+    cpuUsagePercent: null,
+    memoryUsageMB: null,
+    peakDate: null,
+  }
+}
+
+async function queryValue(prometheusUrl, query) {
   if (!prometheusUrl) return null
+
   try {
-    const response = await axios.get(buildApiUrl(prometheusUrl, '/api/v1/query'), {
+    const response = await axios.get(`${prometheusUrl.replace(/\/$/, '')}/api/v1/query`, {
       params: { query },
-      timeout: 10000,
+      timeout: 5000,
     })
-    const result = response.data?.data?.result
-    if (!Array.isArray(result) || result.length === 0) return null
-    const value = result[0]?.value?.[1]
+
+    const value = response.data?.data?.result?.[0]?.value?.[1]
     return value === undefined ? null : Number(value)
   } catch (error) {
     return null
   }
 }
 
-async function getLiveMetrics(prometheusUrl, appName) {
-  const [cpu, memory, replicas] = await Promise.allSettled([
-    queryPrometheus(
-      prometheusUrl,
-      `sum(rate(container_cpu_usage_seconds_total{pod=~"${appName}.*",container!="POD"}[5m]))`
-    ),
-    queryPrometheus(
-      prometheusUrl,
-      `sum(container_memory_working_set_bytes{pod=~"${appName}.*",container!="POD"})`
-    ),
-    queryPrometheus(prometheusUrl, `sum(kube_deployment_status_replicas_available{deployment="${appName}"})`),
-  ])
+async function queryLiveMetrics(prometheusUrl, appName) {
+  if (!prometheusUrl || !appName) return emptyLiveMetrics()
 
-  const metrics = {
-    available: false,
-    cpuUsage: null,
-    memoryUsage: null,
-    replicas: null,
+  const queries = {
+    cpuUsagePercent: `sum(rate(container_cpu_usage_seconds_total{pod=~"${appName}.*",container!="POD"}[5m])) * 100`,
+    memoryUsageMB: `sum(container_memory_working_set_bytes{pod=~"${appName}.*",container!="POD"}) / 1024 / 1024`,
+    activePodCount: `sum(kube_deployment_status_replicas_available{deployment="${appName}"})`,
+    requestsPerSecond: `sum(rate(http_requests_total{app="${appName}"}[5m]))`,
+    errorRatePercent: `sum(rate(http_requests_total{app="${appName}",status=~"5.."}[5m])) / sum(rate(http_requests_total{app="${appName}"}[5m])) * 100`,
+    p95LatencyMs: `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="${appName}"}[5m])) by (le)) * 1000`,
   }
 
-  const values = [cpu, memory, replicas].map((entry) => (entry.status === 'fulfilled' ? entry.value : null))
-  if (values.some((value) => value !== null)) {
-    metrics.available = true
-    metrics.cpuUsage = values[0]
-    metrics.memoryUsage = values[1]
-    metrics.replicas = values[2]
-  }
+  const results = await Promise.allSettled(
+    Object.values(queries).map((query) => queryValue(prometheusUrl, query))
+  )
+  const values = Object.keys(queries).reduce((acc, key, index) => {
+    acc[key] = results[index].status === 'fulfilled' ? results[index].value : null
+    return acc
+  }, {})
 
-  return metrics
+  const available = Object.values(values).some((value) => value !== null)
+  return {
+    available,
+    ...values,
+    queryTime: new Date().toISOString(),
+  }
 }
 
-async function getHistoricalPeak(prometheusUrl, appName, days = 30) {
-  const window = `${days}d`
-  const [cpu, memory] = await Promise.allSettled([
-    queryPrometheus(
-      prometheusUrl,
-      `max_over_time(sum(rate(container_cpu_usage_seconds_total{pod=~"${appName}.*",container!="POD"}[5m]))[${window}:])`
-    ),
-    queryPrometheus(
-      prometheusUrl,
-      `max_over_time(sum(container_memory_working_set_bytes{pod=~"${appName}.*",container!="POD"})[${window}:])`
-    ),
-  ])
+async function queryHistoricalPeak(prometheusUrl, appName) {
+  if (!prometheusUrl || !appName) return emptyHistoricalPeak()
 
-  const values = [cpu, memory].map((entry) => (entry.status === 'fulfilled' ? entry.value : null))
-  if (values.every((value) => value === null)) {
-    return { available: false, cpuPeak: null, memoryPeak: null }
+  const queries = {
+    cpuUsagePercent: `max_over_time((sum(rate(container_cpu_usage_seconds_total{pod=~"${appName}.*",container!="POD"}[5m])) * 100)[30d:])`,
+    memoryUsageMB: `max_over_time((sum(container_memory_working_set_bytes{pod=~"${appName}.*",container!="POD"}) / 1024 / 1024)[30d:])`,
+  }
+
+  const results = await Promise.allSettled(
+    Object.values(queries).map((query) => queryValue(prometheusUrl, query))
+  )
+  const values = Object.keys(queries).reduce((acc, key, index) => {
+    acc[key] = results[index].status === 'fulfilled' ? results[index].value : null
+    return acc
+  }, {})
+
+  if (Object.values(values).every((value) => value === null)) {
+    return emptyHistoricalPeak()
   }
 
   return {
     available: true,
-    cpuPeak: values[0],
-    memoryPeak: values[1],
+    ...values,
+    peakDate: new Date().toISOString(),
   }
 }
 
-module.exports = { getLiveMetrics, getHistoricalPeak }
+module.exports = { queryLiveMetrics, queryHistoricalPeak }

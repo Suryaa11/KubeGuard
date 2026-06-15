@@ -1,75 +1,85 @@
 const router = require('express').Router()
+
 const Report = require('../models/Report')
-const { getReportContent } = require('../services/blobStorage')
-const { checkInternal } = require('../middleware/checkInternal')
+const { downloadReport } = require('../services/blobStorage')
+const { requireAuthenticatedHeaders } = require('../middleware/checkRole')
 
-async function buildReportResponse(eventId) {
-  const report = await Report.findOne({ eventId }).lean()
-  if (!report) return null
+function applyOwnershipFilter(filter, req) {
+  if (req.user.roles.includes('Admin')) {
+    return filter
+  }
 
-  const blobContent = await getReportContent(report.reportBlobPath).catch(() => null)
-  return { report, blobContent }
+  if (req.user.roles.includes('DevOpsEngineer')) {
+    return { ...filter, ownerId: req.user.id }
+  }
+
+  return { ...filter, _id: null }
 }
 
-router.get('/', async (req, res) => {
-  try {
-    const { projectId, riskScore, recommendation, decision, page = 1, limit = 20 } = req.query
+router.use(requireAuthenticatedHeaders)
 
-    const filter = {}
+router.get('/', async (req, res, next) => {
+  try {
+    const { projectId, riskScore, recommendation, decision } = req.query
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
+
+    let filter = {}
     if (projectId) filter.projectId = projectId
-    if (riskScore) filter.riskScore = Number(riskScore)
+    if (riskScore) filter.riskScore = String(riskScore).toLowerCase()
     if (recommendation) filter.recommendation = recommendation
     if (decision) filter.adminDecision = decision
+    filter = applyOwnershipFilter(filter, req)
 
-    const pageNumber = Math.max(1, Number(page) || 1)
-    const limitNumber = Math.min(100, Math.max(1, Number(limit) || 20))
-
-    const [items, total] = await Promise.all([
+    const [reports, total] = await Promise.all([
       Report.find(filter)
         .sort({ generatedAt: -1 })
-        .skip((pageNumber - 1) * limitNumber)
-        .limit(limitNumber)
+        .skip((page - 1) * limit)
+        .limit(limit)
         .lean(),
       Report.countDocuments(filter),
     ])
 
-    res.json({
-      reports: items,
+    return res.json({
+      reports,
       pagination: {
-        page: pageNumber,
-        limit: limitNumber,
+        page,
+        limit,
         total,
-        pages: Math.ceil(total / limitNumber),
+        pages: Math.ceil(total / limit),
       },
     })
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    return next(error)
   }
 })
 
-router.get('/internal/:eventId', checkInternal, async (req, res) => {
+router.get('/:eventId', async (req, res, next) => {
   try {
-    const response = await buildReportResponse(req.params.eventId)
-    if (!response) {
-      return res.status(404).json({ error: 'NotFound', message: 'Report not found.' })
+    const filter = applyOwnershipFilter({ eventId: req.params.eventId }, req)
+    const metadata = await Report.findOne(filter).lean()
+
+    if (!metadata) {
+      return res.status(404).json({
+        error: 'NotFound',
+        message: 'Report not found',
+      })
     }
 
-    res.json(response)
-  } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
-  }
-})
-
-router.get('/:eventId', async (req, res) => {
-  try {
-    const response = await buildReportResponse(req.params.eventId)
-    if (!response) {
-      return res.status(404).json({ error: 'NotFound', message: 'Report not found.' })
+    const fullReport = await downloadReport(metadata.projectId, metadata.eventId)
+    if (fullReport) {
+      return res.json({
+        ...fullReport,
+        adminDecision: metadata.adminDecision,
+        decidedBy: metadata.decidedBy,
+        decidedByEmail: metadata.decidedByEmail,
+        decisionNote: metadata.decisionNote,
+        decidedAt: metadata.decidedAt,
+      })
     }
-
-    res.json(response)
+    return res.json(metadata)
   } catch (error) {
-    res.status(500).json({ error: 'InternalError', message: error.message })
+    return next(error)
   }
 })
 

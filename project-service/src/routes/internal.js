@@ -5,7 +5,7 @@ const { checkInternal } = require('../middleware/checkInternal')
 
 router.get('/projects/:id', checkInternal, async (req, res, next) => {
   try {
-    const project = await Project.findById(req.params.id)
+    const project = await Project.findById(req.params.id).select('+webhookSecret')
     if (!project) {
       return res.status(404).json({ error: 'NotFound', message: 'Project not found.' })
     }
