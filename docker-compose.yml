@@ -1,69 +1,158 @@
 version: '3.9'
 
 services:
+
+  # ─────────────────────────────────────────────
+  # MongoDB (local dev only)
+  # ─────────────────────────────────────────────
   mongodb:
-    image: mongo:7.0
+    image: mongo:7
+    container_name: kubeguard-mongodb
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
-      - mongo_data:/data/db
+      - mongodb_data:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
-  gateway:
-    build: ./gateway
-    ports:
-      - "3000:3000"
-    env_file: ./gateway/.env.docker
-    depends_on:
-      - project-service
-      - watcher-service
-      - analysis-service
-      - notification-service
-    restart: unless-stopped
-
+  # ─────────────────────────────────────────────
+  # MS2 — Project Service
+  # ─────────────────────────────────────────────
   project-service:
-    build: ./project-service
+    build:
+      context: ./project-service
+      dockerfile: Dockerfile
+    container_name: kubeguard-project
+    restart: unless-stopped
     ports:
       - "3001:3001"
-    env_file: ./project-service/.env.docker
+    env_file:
+      - ./project-service/.env.docker
     depends_on:
       mongodb:
         condition: service_healthy
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
+  # ─────────────────────────────────────────────
+  # MS3 — Watcher Service
+  # ─────────────────────────────────────────────
   watcher-service:
-    build: ./watcher-service
+    build:
+      context: ./watcher-service
+      dockerfile: Dockerfile
+    container_name: kubeguard-watcher
+    restart: unless-stopped
     ports:
       - "3002:3002"
-    env_file: ./watcher-service/.env.docker
+    env_file:
+      - ./watcher-service/.env.docker
     depends_on:
       mongodb:
         condition: service_healthy
-    restart: unless-stopped
+      project-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
+  # ─────────────────────────────────────────────
+  # MS4 — Analysis Service
+  # ─────────────────────────────────────────────
   analysis-service:
-    build: ./analysis-service
+    build:
+      context: ./analysis-service
+      dockerfile: Dockerfile
+    container_name: kubeguard-analysis
+    restart: unless-stopped
     ports:
       - "3003:3003"
-    env_file: ./analysis-service/.env.docker
+    env_file:
+      - ./analysis-service/.env.docker
     depends_on:
       mongodb:
         condition: service_healthy
-    restart: unless-stopped
+      project-service:
+        condition: service_healthy
+      watcher-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
+  # ─────────────────────────────────────────────
+  # MS5 — Notification Service
+  # ─────────────────────────────────────────────
   notification-service:
-    build: ./notification-service
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: kubeguard-notification
+    restart: unless-stopped
     ports:
       - "3004:3004"
-    env_file: ./notification-service/.env.docker
+    env_file:
+      - ./notification-service/.env.docker
     depends_on:
       mongodb:
         condition: service_healthy
+      project-service:
+        condition: service_healthy
+      watcher-service:
+        condition: service_healthy
+      analysis-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ─────────────────────────────────────────────
+  # MS1 — API Gateway
+  # ─────────────────────────────────────────────
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: kubeguard-gateway
     restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./gateway/.env.docker
+    depends_on:
+      project-service:
+        condition: service_healthy
+      watcher-service:
+        condition: service_healthy
+      analysis-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
-  mongo_data:
+  mongodb_data:
+    driver: local
