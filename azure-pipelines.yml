@@ -1,233 +1,233 @@
-trigger:
-  branches:
-    include:
-      - main
+# trigger:
+#   branches:
+#     include:
+#       - main
 
-variables:
-  containerRegistry: 'kubeguardacr.azurecr.io'
-  buildId: $(Build.BuildId)
+# variables:
+#   containerRegistry: 'kubeguardacr.azurecr.io'
+#   buildId: $(Build.BuildId)
 
-stages:
-  - stage: Build
-    displayName: Build
-    jobs:
-      - job: BuildFrontend
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Frontend
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-frontend
-              dockerfile: frontend/Dockerfile
-              context: frontend
-              buildArguments: |
-                VITE_AZURE_CLIENT_ID=$(VITE_AZURE_CLIENT_ID)
-                VITE_AZURE_TENANT_ID=$(VITE_AZURE_TENANT_ID)
-                VITE_AZURE_REDIRECT_URI=$(VITE_AZURE_REDIRECT_URI)
-                VITE_API_BASE_URL=$(VITE_API_BASE_URL)
-              tags: |
-                $(buildId)
-                latest
+# stages:
+#   - stage: Build
+#     displayName: Build
+#     jobs:
+#       - job: BuildFrontend
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Frontend
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-frontend
+#               dockerfile: frontend/Dockerfile
+#               context: frontend
+#               buildArguments: |
+#                 VITE_AZURE_CLIENT_ID=$(VITE_AZURE_CLIENT_ID)
+#                 VITE_AZURE_TENANT_ID=$(VITE_AZURE_TENANT_ID)
+#                 VITE_AZURE_REDIRECT_URI=$(VITE_AZURE_REDIRECT_URI)
+#                 VITE_API_BASE_URL=$(VITE_API_BASE_URL)
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: BuildGateway
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Gateway
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-gateway
-              dockerfile: gateway/Dockerfile
-              context: gateway
-              tags: |
-                $(buildId)
-                latest
+#       - job: BuildGateway
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Gateway
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-gateway
+#               dockerfile: gateway/Dockerfile
+#               context: gateway
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: BuildProjectService
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Project Service
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-project-service
-              dockerfile: project-service/Dockerfile
-              context: project-service
-              tags: |
-                $(buildId)
-                latest
+#       - job: BuildProjectService
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Project Service
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-project-service
+#               dockerfile: project-service/Dockerfile
+#               context: project-service
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: BuildWatcherService
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Watcher Service
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-watcher-service
-              dockerfile: watcher-service/Dockerfile
-              context: watcher-service
-              tags: |
-                $(buildId)
-                latest
+#       - job: BuildWatcherService
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Watcher Service
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-watcher-service
+#               dockerfile: watcher-service/Dockerfile
+#               context: watcher-service
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: BuildAnalysisService
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Analysis Service
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-analysis-service
-              dockerfile: analysis-service/Dockerfile
-              context: analysis-service
-              tags: |
-                $(buildId)
-                latest
+#       - job: BuildAnalysisService
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Analysis Service
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-analysis-service
+#               dockerfile: analysis-service/Dockerfile
+#               context: analysis-service
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: BuildNotificationService
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Docker@2
-            displayName: Build and Push Notification Service
-            inputs:
-              command: buildAndPush
-              containerRegistry: kubeguard-acr-connection
-              repository: kubeguard-notification-service
-              dockerfile: notification-service/Dockerfile
-              context: notification-service
-              tags: |
-                $(buildId)
-                latest
+#       - job: BuildNotificationService
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: Docker@2
+#             displayName: Build and Push Notification Service
+#             inputs:
+#               command: buildAndPush
+#               containerRegistry: kubeguard-acr-connection
+#               repository: kubeguard-notification-service
+#               dockerfile: notification-service/Dockerfile
+#               context: notification-service
+#               tags: |
+#                 $(buildId)
+#                 latest
 
-      - job: PackageFunctions
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: ArchiveFiles@2
-            displayName: Archive Azure Functions
-            inputs:
-              rootFolderOrFile: functions
-              includeRootFolder: false
-              archiveType: zip
-              archiveFile: $(Build.ArtifactStagingDirectory)/functions.zip
-              replaceExistingArchive: true
-          - publish: $(Build.ArtifactStagingDirectory)/functions.zip
-            artifact: functions-package
+#       - job: PackageFunctions
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - task: ArchiveFiles@2
+#             displayName: Archive Azure Functions
+#             inputs:
+#               rootFolderOrFile: functions
+#               includeRootFolder: false
+#               archiveType: zip
+#               archiveFile: $(Build.ArtifactStagingDirectory)/functions.zip
+#               replaceExistingArchive: true
+#           - publish: $(Build.ArtifactStagingDirectory)/functions.zip
+#             artifact: functions-package
 
-  - stage: Deploy
-    displayName: Deploy
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - deployment: DeployServices
-        displayName: Deploy Services
-        pool:
-          vmImage: ubuntu-latest
-        environment: kubeguard-production
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Frontend
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-frontend
-                    containers: $(containerRegistry)/kubeguard-frontend:$(buildId)
+#   - stage: Deploy
+#     displayName: Deploy
+#     dependsOn: Build
+#     condition: succeeded()
+#     jobs:
+#       - deployment: DeployServices
+#         displayName: Deploy Services
+#         pool:
+#           vmImage: ubuntu-latest
+#         environment: kubeguard-production
+#         strategy:
+#           runOnce:
+#             deploy:
+#               steps:
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Frontend
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-frontend
+#                     containers: $(containerRegistry)/kubeguard-frontend:$(buildId)
 
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Gateway
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-gateway
-                    containers: $(containerRegistry)/kubeguard-gateway:$(buildId)
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Gateway
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-gateway
+#                     containers: $(containerRegistry)/kubeguard-gateway:$(buildId)
 
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Project Service
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-project
-                    containers: $(containerRegistry)/kubeguard-project-service:$(buildId)
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Project Service
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-project
+#                     containers: $(containerRegistry)/kubeguard-project-service:$(buildId)
 
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Watcher Service
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-watcher
-                    containers: $(containerRegistry)/kubeguard-watcher-service:$(buildId)
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Watcher Service
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-watcher
+#                     containers: $(containerRegistry)/kubeguard-watcher-service:$(buildId)
 
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Analysis Service
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-analysis
-                    containers: $(containerRegistry)/kubeguard-analysis-service:$(buildId)
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Analysis Service
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-analysis
+#                     containers: $(containerRegistry)/kubeguard-analysis-service:$(buildId)
 
-                - task: AzureWebAppContainer@1
-                  displayName: Deploy Notification Service
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appName: kubeguard-notification
-                    containers: $(containerRegistry)/kubeguard-notification-service:$(buildId)
+#                 - task: AzureWebAppContainer@1
+#                   displayName: Deploy Notification Service
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appName: kubeguard-notification
+#                     containers: $(containerRegistry)/kubeguard-notification-service:$(buildId)
 
-      - deployment: DeployFunctions
-        displayName: Deploy Azure Functions
-        pool:
-          vmImage: ubuntu-latest
-        environment: kubeguard-production
-        dependsOn: DeployServices
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - download: current
-                  artifact: functions-package
-                - task: AzureFunctionApp@1
-                  displayName: Deploy Functions App
-                  inputs:
-                    azureSubscription: kubeguard-azure-connection
-                    appType: functionApp
-                    appName: kubeguard-functions
-                    package: $(Pipeline.Workspace)/functions-package/functions.zip
+#       - deployment: DeployFunctions
+#         displayName: Deploy Azure Functions
+#         pool:
+#           vmImage: ubuntu-latest
+#         environment: kubeguard-production
+#         dependsOn: DeployServices
+#         strategy:
+#           runOnce:
+#             deploy:
+#               steps:
+#                 - download: current
+#                   artifact: functions-package
+#                 - task: AzureFunctionApp@1
+#                   displayName: Deploy Functions App
+#                   inputs:
+#                     azureSubscription: kubeguard-azure-connection
+#                     appType: functionApp
+#                     appName: kubeguard-functions
+#                     package: $(Pipeline.Workspace)/functions-package/functions.zip
 
-  - stage: Verify
-    displayName: Verify
-    dependsOn: Deploy
-    condition: succeeded()
-    jobs:
-      - job: HealthCheck
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - script: |
-              set -e
-              services=(
-                "https://kubeguard-gateway.azurewebsites.net/health"
-                "https://kubeguard-project.azurewebsites.net/health"
-                "https://kubeguard-watcher.azurewebsites.net/health"
-                "https://kubeguard-analysis.azurewebsites.net/health"
-                "https://kubeguard-notification.azurewebsites.net/health"
-              )
+#   - stage: Verify
+#     displayName: Verify
+#     dependsOn: Deploy
+#     condition: succeeded()
+#     jobs:
+#       - job: HealthCheck
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - script: |
+#               set -e
+#               services=(
+#                 "https://kubeguard-gateway.azurewebsites.net/health"
+#                 "https://kubeguard-project.azurewebsites.net/health"
+#                 "https://kubeguard-watcher.azurewebsites.net/health"
+#                 "https://kubeguard-analysis.azurewebsites.net/health"
+#                 "https://kubeguard-notification.azurewebsites.net/health"
+#               )
 
-              for url in "${services[@]}"; do
-                response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$url")
-                if [ "$response" != "200" ]; then
-                  echo "Health check failed for $url (HTTP $response)"
-                  exit 1
-                fi
-                echo "OK: $url"
-              done
-            displayName: Health check all services
+#               for url in "${services[@]}"; do
+#                 response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$url")
+#                 if [ "$response" != "200" ]; then
+#                   echo "Health check failed for $url (HTTP $response)"
+#                   exit 1
+#                 fi
+#                 echo "OK: $url"
+#               done
+#             displayName: Health check all services
