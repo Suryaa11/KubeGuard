@@ -142,8 +142,8 @@ services:
       args:
         VITE_AZURE_CLIENT_ID: "7712a3d3-2896-420e-acf4-f9f18750f820"
         VITE_AZURE_TENANT_ID: "01ed7ca4-f203-43a5-956a-08329f95a438"
-        VITE_AZURE_REDIRECT_URI: "https://outer-ivy-visibly.ngrok-free.dev"
-        VITE_API_BASE_URL: "https://outer-ivy-visibly.ngrok-free.dev"
+        VITE_AZURE_REDIRECT_URI: "https://kubeguard.hmsclinic.online"
+        VITE_API_BASE_URL: "https://kubeguard.hmsclinic.online"
 
     container_name: kubeguard-frontend
     restart: unless-stopped
