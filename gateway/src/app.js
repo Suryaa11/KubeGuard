@@ -12,9 +12,7 @@ const requireRole = require('./middleware/checkRole')
 const logger = require('./utils/logger')
 
 const app = express()
-
 const jsonParser = express.json()
-
 const errorResponse = (error, message) => ({ error, message })
 
 const createLimiter = (max, message) =>
@@ -38,13 +36,16 @@ const addRequestId = (proxyReq, req) => {
   proxyReq.setHeader('x-request-id', requestId)
 }
 
-const writeRawBody = (proxyReq, req) => {
-  if (!Buffer.isBuffer(req.body)) {
-    return
+const writeBody = (proxyReq, req) => {
+  if (Buffer.isBuffer(req.body)) {
+    proxyReq.setHeader('content-length', req.body.length)
+    proxyReq.write(req.body)
+  } else if (req.body && typeof req.body === 'object') {
+    const bodyData = JSON.stringify(req.body)
+    proxyReq.setHeader('content-type', 'application/json')
+    proxyReq.setHeader('content-length', Buffer.byteLength(bodyData))
+    proxyReq.write(bodyData)
   }
-
-  proxyReq.setHeader('content-length', req.body.length)
-  proxyReq.write(req.body)
 }
 
 const createProxy = (target, options = {}) =>
@@ -56,9 +57,7 @@ const createProxy = (target, options = {}) =>
     pathRewrite: options.pathRewrite || { '^/api': '' },
     onProxyReq: (proxyReq, req) => {
       addRequestId(proxyReq, req)
-      if (options.forwardRawBody) {
-        writeRawBody(proxyReq, req)
-      }
+      writeBody(proxyReq, req)
     },
     onError: (err, req, res) => {
       logger.error(`Proxy error to ${target}: ${err.message}`)
@@ -71,18 +70,11 @@ const createProxy = (target, options = {}) =>
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 app.use(helmet())
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
-  })
-)
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }))
 app.use(morgan('combined'))
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api/webhook/')) {
-    return next()
-  }
 
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/webhook/')) return next()
   return jsonParser(req, res, next)
 })
 
@@ -98,7 +90,6 @@ app.post(
   express.raw({ type: '*/*' }),
   createProxy(process.env.WATCHER_SERVICE_URL, {
     pathRewrite: { '^/api': '' },
-    forwardRawBody: true,
   })
 )
 
