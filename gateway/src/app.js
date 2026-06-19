@@ -105,7 +105,9 @@ app.post(
 app.get(
   '/api/notify/decide',
   generalLimiter,
-  createProxy(process.env.NOTIFICATION_SERVICE_URL)
+  createProxy(process.env.NOTIFICATION_SERVICE_URL, {
+    pathRewrite: { '^/api': '' },
+  })
 )
 
 app.use(generalLimiter)
