@@ -26,6 +26,21 @@ api.interceptors.response.use(
       throw normalizedError
     }
 
+    const serverMessage = error.response.data?.message
+    if (error.response.status === 504) {
+      const timeoutError = new Error(serverMessage || 'The server timed out while processing the request. Please try again.')
+      timeoutError.status = 504
+      timeoutError.response = error.response
+      throw timeoutError
+    }
+
+    if (error.response.status >= 500) {
+      const serverError = new Error(serverMessage || 'Server error. Please try again.')
+      serverError.status = error.response.status
+      serverError.response = error.response
+      throw serverError
+    }
+
     if (error.response.status === 401) {
       useAuthStore.getState().clearAuth()
       useToastStore.getState().addToast({
@@ -63,6 +78,6 @@ export const getEvent = (id) => api.get(`/events/${id}`)
 
 export const getReport = (eventId) => api.get(`/reports/${eventId}`)
 export const getReports = (params) => api.get('/reports', { params })
-export const decideReport = (id, data) => api.post('/notify/decide', { reportId: id, ...data })
+export const decideReport = (eventId, data) => api.post('/notify/decide', { eventId, ...data })
 
 export const getDecisions = () => api.get('/notify/decisions')

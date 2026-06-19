@@ -57,6 +57,12 @@ async function processMessage(message) {
     logger.info(`Processed report-ready message for event: ${body.eventId}`)
   } catch (error) {
     logger.error(`Failed to process report-ready message: ${error.message}`)
+  } finally {
+    if (receiver) {
+      await receiver.completeMessage(message).catch((error) => {
+        logger.warn(`Failed to complete Service Bus message: ${error.message}`)
+      })
+    }
   }
 }
 
@@ -77,13 +83,18 @@ async function startConsumer() {
       receiveMode: 'peekLock',
     })
 
-    receiver.subscribe({
-      processMessage,
-      processError: async (error) => {
-        logger.error(`Service Bus consumer error: ${error.message}`)
-        scheduleReconnect()
+    receiver.subscribe(
+      {
+        processMessage,
+        processError: async (error) => {
+          logger.error(`Service Bus consumer error: ${error.message}`)
+          scheduleReconnect()
+        },
       },
-    })
+      {
+        autoCompleteMessages: false,
+      }
+    )
 
     logger.info(`Service Bus consumer started for queue: ${process.env.SERVICE_BUS_QUEUE}`)
   } catch (error) {

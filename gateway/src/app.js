@@ -51,6 +51,8 @@ const createProxy = (target, options = {}) =>
   createProxyMiddleware({
     target,
     changeOrigin: true,
+    proxyTimeout: options.proxyTimeout || 60000,
+    timeout: options.timeout || 60000,
     pathRewrite: options.pathRewrite || { '^/api': '' },
     onProxyReq: (proxyReq, req) => {
       addRequestId(proxyReq, req)
@@ -67,6 +69,7 @@ const createProxy = (target, options = {}) =>
   })
 
 app.disable('x-powered-by')
+app.set('trust proxy', 1)
 app.use(helmet())
 app.use(
   cors({
@@ -97,6 +100,12 @@ app.post(
     pathRewrite: { '^/api': '' },
     forwardRawBody: true,
   })
+)
+
+app.get(
+  '/api/notify/decide',
+  generalLimiter,
+  createProxy(process.env.NOTIFICATION_SERVICE_URL)
 )
 
 app.use(generalLimiter)

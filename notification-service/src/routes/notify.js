@@ -56,18 +56,14 @@ async function updateEventStatus(eventId, decision) {
 }
 
 async function updateReportDecision(eventId, payload) {
-  const url = `${trimTrailingSlash(process.env.ANALYSIS_SERVICE_URL)}/internal/reports/${eventId}/decision`;
-  console.log('[DEBUG] updateReportDecision URL:', url);
-  console.log('[DEBUG] payload:', JSON.stringify(payload));
-  console.log('[DEBUG] secret set:', !!process.env.INTERNAL_SECRET);
-  try {
-    const resp = await axios.patch(url, payload, { headers: internalHeaders(), timeout: 15000 });
-    console.log('[DEBUG] response status:', resp.status);
-    return resp;
-  } catch (err) {
-    console.error('[DEBUG] PATCH failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
-    throw err;
-  }
+  return axios.patch(
+    `${trimTrailingSlash(process.env.ANALYSIS_SERVICE_URL)}/internal/reports/${eventId}/decision`,
+    payload,
+    {
+      headers: internalHeaders(),
+      timeout: 15000,
+    }
+  )
 }
 
 async function recordDecision({ eventId, decision, note, actor, source }) {

@@ -32,11 +32,17 @@ async function getProjectForUser(req, id) {
 
 async function checkPrometheus(prometheusUrl) {
   try {
-    await axios.get(`${prometheusUrl}/api/v1/status/runtimeinfo`, { timeout: 5000 })
+    await axios.get(`${prometheusUrl}/api/v1/status/runtimeinfo`, { timeout: 3000 })
     return true
   } catch (error) {
     return false
   }
+}
+
+async function refreshPrometheusAvailability(projectId, prometheusUrl) {
+  const prometheusAvailable = await checkPrometheus(prometheusUrl)
+  await Project.findByIdAndUpdate(projectId, { prometheusAvailable })
+  return prometheusAvailable
 }
 
 router.post('/', validate(projectSchema), async (req, res, next) => {
@@ -57,25 +63,30 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
       })
     }
 
-    const prometheusAvailable = await checkPrometheus(req.body.prometheusUrl)
-    if (!prometheusAvailable) {
-      warnings.push('Prometheus check failed. Project was still saved.')
-    }
-
     const webhookSecret = crypto.randomBytes(32).toString('hex')
     const project = new Project({
       ...req.body,
       createdBy: userId,
       createdByEmail: email,
-      prometheusAvailable,
+      prometheusAvailable: false,
       argocdToken: encrypt(req.body.argocdToken),
       kubernetesToken: req.body.kubernetesToken ? encrypt(req.body.kubernetesToken) : null,
       webhookSecret,
     })
 
-    // Save project immediately and respond — do not block on webhook registration
+    warnings.push('Prometheus availability check is running in the background.')
+
+    // Save project immediately and respond; do not block on external dependency checks.
     await project.save()
     res.status(201).json({ project: project.toSafeJSON(), warnings })
+
+    refreshPrometheusAvailability(project._id, req.body.prometheusUrl)
+      .then((prometheusAvailable) => {
+        logger.info(`Prometheus availability for project ${project._id}: ${prometheusAvailable}`)
+      })
+      .catch((err) => {
+        logger.warn(`Prometheus availability check failed for project ${project._id}: ${err.message}`)
+      })
 
     // Register webhook in background (non-blocking)
     registerWebhook(project.githubRepoUrl, project._id.toString(), webhookSecret)

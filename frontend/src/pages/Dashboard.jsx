@@ -135,7 +135,7 @@ export const Dashboard = () => {
   useEffect(() => {
     const onKeyDown = (e) => {
       if (
-        e.key.toLowerCase() === 'n' &&
+        String(e.key || '').toLowerCase() === 'n' &&
         !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)
       ) {
         setIsFormOpen(true)
