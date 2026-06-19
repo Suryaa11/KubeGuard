@@ -43,6 +43,7 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
   try {
     const { userId, email } = getUser(req)
     const warnings = []
+
     const existing = await Project.findOne({
       githubRepoUrl: req.body.githubRepoUrl,
       branch: req.body.branch,
@@ -68,20 +69,28 @@ router.post('/', validate(projectSchema), async (req, res, next) => {
       createdByEmail: email,
       prometheusAvailable,
       argocdToken: encrypt(req.body.argocdToken),
-      kubernetesToken: encrypt(req.body.kubernetesToken),
+      kubernetesToken: req.body.kubernetesToken ? encrypt(req.body.kubernetesToken) : null,
       webhookSecret,
     })
 
-    const webhookResult = await registerWebhook(project.githubRepoUrl, project._id.toString(), webhookSecret)
-    if (webhookResult.success) {
-      project.githubWebhookId = webhookResult.webhookId
-    } else {
-      project.githubWebhookId = null
-      warnings.push(`GitHub webhook registration failed. Project was still saved. ${webhookResult.error}`)
-    }
-
+    // Save project immediately and respond — do not block on webhook registration
     await project.save()
-    return res.status(201).json({ project: project.toSafeJSON(), warnings })
+    res.status(201).json({ project: project.toSafeJSON(), warnings })
+
+    // Register webhook in background (non-blocking)
+    registerWebhook(project.githubRepoUrl, project._id.toString(), webhookSecret)
+      .then(async (webhookResult) => {
+        if (webhookResult.success) {
+          await Project.findByIdAndUpdate(project._id, { githubWebhookId: webhookResult.webhookId })
+          logger.info(`[project-service] Webhook registered for project ${project._id}`)
+        } else {
+          logger.warn(`[project-service] Webhook registration failed for project ${project._id}: ${webhookResult.error}`)
+        }
+      })
+      .catch((err) => {
+        logger.error(`[project-service] Webhook registration error for project ${project._id}: ${err.message}`)
+      })
+
   } catch (error) {
     return next(error)
   }
