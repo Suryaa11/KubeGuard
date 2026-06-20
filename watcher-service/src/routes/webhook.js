@@ -2,7 +2,12 @@ const express = require('express')
 const axios = require('axios')
 const Event = require('../models/Event')
 const { verifyGithubSignature } = require('../services/hmac')
-const { buildRawDiff, filterMonitoredFiles, parseSemanticChanges } = require('../services/diffParser')
+const {
+  buildRawDiff,
+  extractAuthorInfo,
+  filterMonitoredFiles,
+  parseSemanticChanges,
+} = require('../services/diffParser')
 const { pauseArgocdSync } = require('../services/argocd')
 const { triggerAnalysis } = require('../services/analysisClient')
 const { BadRequestError, NotFoundError, UnauthorizedError } = require('../utils/errors')
@@ -99,6 +104,7 @@ router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) 
     }
 
     const latestCommit = commits[commits.length - 1] || payload.head_commit || {}
+    const authorInfo = extractAuthorInfo(payload)
     const semanticChanges = await parseSemanticChanges(payload, project, monitoredChangedFiles)
     const rawDiff = buildRawDiff(commits, monitoredChangedFiles)
 
@@ -111,8 +117,8 @@ router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) 
       commitSha: payload.after || latestCommit.id || 'unknown',
       commitMessage: latestCommit.message || '',
       commitUrl: payload.head_commit?.url || latestCommit.url || payload.compare || '',
-      author: latestCommit.author?.name || payload.pusher?.name || '',
-      authorEmail: latestCommit.author?.email || payload.pusher?.email || '',
+      author: authorInfo.author,
+      authorEmail: authorInfo.authorEmail,
       changedFiles,
       monitoredChangedFiles,
       semanticChanges,

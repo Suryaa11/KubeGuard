@@ -209,24 +209,11 @@ function collectChangedYamlFiles(payload = {}, monitoredFiles = []) {
   return [...fileChanges.entries()].map(([file, changeType]) => ({ file, changeType }))
 }
 
-function normalizePayloadAuthor(payload = {}) {
-  const firstAuthor = payload.commits?.[0]?.author
-  const lastCommit = payload.commits?.[payload.commits.length - 1]
-
-  if (firstAuthor?.name && lastCommit && !lastCommit.author?.name) {
-    lastCommit.author = {
-      ...(lastCommit.author || {}),
-      name: firstAuthor.name,
-      email: lastCommit.author?.email || firstAuthor.email,
-    }
-  }
-
-  if (firstAuthor?.name && payload.head_commit && !payload.head_commit.author?.name) {
-    payload.head_commit.author = {
-      ...(payload.head_commit.author || {}),
-      name: firstAuthor.name,
-      email: payload.head_commit.author?.email || firstAuthor.email,
-    }
+function extractAuthorInfo(payload = {}) {
+  const commit = payload.commits?.[0] || payload.head_commit || {}
+  return {
+    author: commit.author?.name || commit.committer?.name || 'Unknown',
+    authorEmail: commit.author?.email || commit.committer?.email || '',
   }
 }
 
@@ -259,8 +246,6 @@ function compareFlattenedYaml(file, oldYaml, newYaml) {
 }
 
 async function parseSemanticChanges(payload = {}, project = {}, monitoredFiles = []) {
-  normalizePayloadAuthor(payload)
-
   const repoInfo = parseGithubRepoUrl(project.githubRepoUrl)
   const oldCommitSha = payload.before
   const newCommitSha = payload.after
@@ -303,6 +288,7 @@ function buildRawDiff(commits = [], monitoredFiles = []) {
 
 module.exports = {
   buildRawDiff,
+  extractAuthorInfo,
   filterMonitoredFiles,
   parseSemanticChanges,
 }
