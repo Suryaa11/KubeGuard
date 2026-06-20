@@ -10,7 +10,6 @@ const CRITICAL_FIELDS = [
   'limits',
   'minReplicas',
   'maxReplicas',
-  'targetCPUUtilizationPercentage',
   'image',
   'tag',
   'resources',
@@ -38,10 +37,7 @@ function isPlainObject(value) {
 
 function isCriticalField(fieldPath = '') {
   const normalized = fieldPath.toLowerCase()
-  return CRITICAL_FIELDS.some((field) => {
-    const critical = field.toLowerCase()
-    return normalized === critical || normalized.endsWith(`.${critical}`) || normalized.includes(`.${critical}.`)
-  })
+  return CRITICAL_FIELDS.some((field) => normalized.includes(field.toLowerCase()))
 }
 
 function parseGithubRepoUrl(githubRepoUrl = '') {
@@ -73,8 +69,9 @@ async function fetchGithubFile({ owner, repo, filePath, ref }) {
   if (!ref) return null
 
   try {
+    const encodedPath = encodeURIComponent(filePath).replace(/%2F/g, '/')
     const response = await axios.get(
-      `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath).replace(/%2F/g, '/')}`,
+      `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`,
       {
         headers: githubHeaders(),
         params: { ref },
@@ -95,80 +92,91 @@ async function fetchGithubFile({ owner, repo, filePath, ref }) {
   }
 }
 
-function parseYamlContent(content) {
-  if (!content) return undefined
-  const docs = yaml.loadAll(content); const parsed = docs.length === 1 ? docs[0] : docs.reduce((acc, doc) => ({ ...acc, ...doc }), {})
-  return parsed === null ? undefined : parsed
+function mergeDeep(target, source) {
+  if (!isPlainObject(source)) return target
+
+  for (const [key, value] of Object.entries(source)) {
+    if (isPlainObject(value) && isPlainObject(target[key])) {
+      target[key] = mergeDeep({ ...target[key] }, value)
+    } else {
+      target[key] = value
+    }
+  }
+
+  return target
 }
 
-function valueToString(value) {
+function parseYamlContent(content) {
+  if (!content) return {}
+
+  const documents = []
+  yaml.loadAll(content, (doc) => {
+    if (doc !== null && doc !== undefined) {
+      documents.push(doc)
+    }
+  })
+
+  return documents.reduce((merged, doc, index) => {
+    if (isPlainObject(doc)) {
+      return mergeDeep(merged, doc)
+    }
+
+    merged[`document${index}`] = doc
+    return merged
+  }, {})
+}
+
+function flattenObject(value, prefix = '', output = {}) {
+  if (isPlainObject(value)) {
+    for (const [key, childValue] of Object.entries(value)) {
+      flattenObject(childValue, prefix ? `${prefix}.${key}` : key, output)
+    }
+    return output
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((childValue, index) => {
+      flattenObject(childValue, `${prefix}[${index}]`, output)
+    })
+
+    if (value.length === 0 && prefix) {
+      output[prefix] = []
+    }
+
+    return output
+  }
+
+  if (prefix) {
+    output[prefix] = value
+  }
+
+  return output
+}
+
+function hasPath(flattened, path) {
+  return Object.prototype.hasOwnProperty.call(flattened, path)
+}
+
+function stringifyValue(value) {
   if (value === undefined) return ''
   if (value === null) return 'null'
   if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value)
 }
 
-function valuesEqual(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right)
+function valuesEqual(oldValue, newValue) {
+  return JSON.stringify(oldValue) === JSON.stringify(newValue)
 }
 
-function changeTypeForValues(oldValue, newValue) {
-  if (oldValue === undefined) return 'added'
-  if (newValue === undefined) return 'removed'
+function getChangeType(oldHasPath, newHasPath, oldValue, newValue) {
+  if (!oldHasPath) return 'added'
+  if (!newHasPath) return 'removed'
   if (typeof oldValue === 'number' && typeof newValue === 'number') {
     if (newValue > oldValue) return 'increase'
     if (newValue < oldValue) return 'decrease'
   }
   return 'modified'
-}
-
-function childPath(parentPath, key) {
-  if (typeof key === 'number') {
-    return `${parentPath}[${key}]`
-  }
-  return parentPath ? `${parentPath}.${key}` : key
-}
-
-function compareValues(oldValue, newValue, fieldPath, file, changes) {
-  if (valuesEqual(oldValue, newValue)) return
-
-  if (isPlainObject(oldValue) || isPlainObject(newValue)) {
-    const keys = new Set([
-      ...Object.keys(isPlainObject(oldValue) ? oldValue : {}),
-      ...Object.keys(isPlainObject(newValue) ? newValue : {}),
-    ])
-
-    for (const key of keys) {
-      compareValues(
-        isPlainObject(oldValue) ? oldValue[key] : undefined,
-        isPlainObject(newValue) ? newValue[key] : undefined,
-        childPath(fieldPath, key),
-        file,
-        changes
-      )
-    }
-    return
-  }
-
-  if (Array.isArray(oldValue) || Array.isArray(newValue)) {
-    const oldArray = Array.isArray(oldValue) ? oldValue : []
-    const newArray = Array.isArray(newValue) ? newValue : []
-    const maxLength = Math.max(oldArray.length, newArray.length)
-
-    for (let index = 0; index < maxLength; index += 1) {
-      compareValues(oldArray[index], newArray[index], childPath(fieldPath, index), file, changes)
-    }
-    return
-  }
-
-  changes.push({
-    file,
-    fieldPath: fieldPath || file,
-    oldValue: valueToString(oldValue),
-    newValue: valueToString(newValue),
-    changeType: changeTypeForValues(oldValue, newValue),
-    isCriticalField: isCriticalField(fieldPath) || isCriticalField(file),
-  })
 }
 
 function collectChangedYamlFiles(payload = {}, monitoredFiles = []) {
@@ -201,7 +209,58 @@ function collectChangedYamlFiles(payload = {}, monitoredFiles = []) {
   return [...fileChanges.entries()].map(([file, changeType]) => ({ file, changeType }))
 }
 
+function normalizePayloadAuthor(payload = {}) {
+  const firstAuthor = payload.commits?.[0]?.author
+  const lastCommit = payload.commits?.[payload.commits.length - 1]
+
+  if (firstAuthor?.name && lastCommit && !lastCommit.author?.name) {
+    lastCommit.author = {
+      ...(lastCommit.author || {}),
+      name: firstAuthor.name,
+      email: lastCommit.author?.email || firstAuthor.email,
+    }
+  }
+
+  if (firstAuthor?.name && payload.head_commit && !payload.head_commit.author?.name) {
+    payload.head_commit.author = {
+      ...(payload.head_commit.author || {}),
+      name: firstAuthor.name,
+      email: payload.head_commit.author?.email || firstAuthor.email,
+    }
+  }
+}
+
+function compareFlattenedYaml(file, oldYaml, newYaml) {
+  const oldFlat = flattenObject(oldYaml)
+  const newFlat = flattenObject(newYaml)
+  const allPaths = [...new Set([...Object.keys(oldFlat), ...Object.keys(newFlat)])].sort()
+
+  return allPaths
+    .filter((fieldPath) => {
+      const oldHasPath = hasPath(oldFlat, fieldPath)
+      const newHasPath = hasPath(newFlat, fieldPath)
+      return oldHasPath !== newHasPath || !valuesEqual(oldFlat[fieldPath], newFlat[fieldPath])
+    })
+    .map((fieldPath) => {
+      const oldHasPath = hasPath(oldFlat, fieldPath)
+      const newHasPath = hasPath(newFlat, fieldPath)
+      const oldValue = oldFlat[fieldPath]
+      const newValue = newFlat[fieldPath]
+
+      return {
+        file,
+        fieldPath,
+        oldValue: stringifyValue(oldValue),
+        newValue: stringifyValue(newValue),
+        changeType: getChangeType(oldHasPath, newHasPath, oldValue, newValue),
+        isCriticalField: isCriticalField(fieldPath),
+      }
+    })
+}
+
 async function parseSemanticChanges(payload = {}, project = {}, monitoredFiles = []) {
+  normalizePayloadAuthor(payload)
+
   const repoInfo = parseGithubRepoUrl(project.githubRepoUrl)
   const oldCommitSha = payload.before
   const newCommitSha = payload.after
@@ -218,9 +277,7 @@ async function parseSemanticChanges(payload = {}, project = {}, monitoredFiles =
         : fetchGithubFile({ ...repoInfo, filePath: file, ref: newCommitSha }),
     ])
 
-    const oldYaml = parseYamlContent(oldContent)
-    const newYaml = parseYamlContent(newContent)
-    compareValues(oldYaml, newYaml, '', file, changes)
+    changes.push(...compareFlattenedYaml(file, parseYamlContent(oldContent), parseYamlContent(newContent)))
   }
 
   return changes

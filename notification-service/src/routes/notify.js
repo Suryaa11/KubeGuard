@@ -140,7 +140,7 @@ router.get('/decide', async (req, res, next) => {
     })
 
     return res.redirect(
-      `${trimTrailingSlash(process.env.FRONTEND_URL)}/events/${decision.eventId}?decided=true&decision=${decision.decision}`
+      `${trimTrailingSlash(process.env.FRONTEND_URL)}/events/${tokenPayload.eventId}?decided=true&decision=${tokenPayload.decision}`
     )
   } catch (error) {
     return next(error)
