@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
 
 const getColor = (value) => {
@@ -9,7 +9,7 @@ const getColor = (value) => {
 
 export const MetricGauge = ({ value, label, unit = '%', max = 100, size = 100 }) => {
   const progress = useMotionValue(0)
-  const rounded = useTransform(progress, (latest) => Math.round(latest))
+  const [displayValue, setDisplayValue] = useState(0)
   const radius = (size - 12) / 2
   const circumference = 2 * Math.PI * radius
   const safeValue = value == null ? null : Math.max(0, Math.min(Number(value), max))
@@ -17,7 +17,11 @@ export const MetricGauge = ({ value, label, unit = '%', max = 100, size = 100 })
 
   useEffect(() => {
     if (safeValue == null) return
-    const controls = animate(progress, safeValue, { duration: 1.1, ease: 'easeOut' })
+    const controls = animate(progress, safeValue, {
+      duration: 1.1,
+      ease: 'easeOut',
+      onUpdate: (latest) => setDisplayValue(Math.round(latest)),
+    })
     return () => controls.stop()
   }, [progress, safeValue])
 
@@ -42,7 +46,9 @@ export const MetricGauge = ({ value, label, unit = '%', max = 100, size = 100 })
           ) : null}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <div className="font-mono text-2xl font-medium text-text-primary">{safeValue == null ? '--' : rounded}</div>
+          <div className="font-mono text-2xl font-medium text-text-primary">
+            {safeValue == null ? '--' : displayValue}
+          </div>
           <div className="mt-1 text-[11px] uppercase tracking-[0.3em] text-text-secondary">{unit}</div>
         </div>
       </div>

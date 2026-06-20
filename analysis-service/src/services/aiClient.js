@@ -64,14 +64,13 @@ async function generateReport(prompt) {
     const response = await axios.post(
       process.env.AI_API_URL,
       {
-        model: process.env.AI_MODEL,
         max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.AI_API_KEY}`,
+          'api-key': process.env.AI_API_KEY,
           'Content-Type': 'application/json',
         },
         timeout: 60000,

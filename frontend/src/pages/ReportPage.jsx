@@ -31,9 +31,9 @@ export const ReportPage = () => {
     setLoading(true)
     try {
       const [projectResponse, eventResponse, reportResponse] = await Promise.all([getProject(projectId), getEvent(eventId), getReport(eventId)])
-      setProject(projectResponse.data)
-      setEvent(eventResponse.data)
-      setReport(reportResponse.data)
+      setProject(projectResponse.data?.project || projectResponse.data)
+      setEvent(eventResponse.data?.event || eventResponse.data)
+      setReport(reportResponse.data?.report || reportResponse.data)
     } finally {
       setLoading(false)
     }
@@ -47,6 +47,14 @@ export const ReportPage = () => {
     () => report?.liveMetrics || { available: true, cpu: 78, memory: 412, pods: 3, requestRate: 120 },
     [report]
   )
+
+  const displayMetrics = useMemo(() => ({
+    available: metrics.available,
+    cpu: metrics.cpuUsagePercent ?? metrics.cpu ?? null,
+    memory: metrics.memoryUsageMB ?? metrics.memory ?? null,
+    pods: metrics.activePodCount ?? metrics.pods ?? null,
+    requestRate: metrics.requestsPerSecond ?? metrics.requestRate ?? null,
+  }), [metrics])
 
   if (loading) return <Skeleton height={800} />
 
@@ -87,16 +95,16 @@ export const ReportPage = () => {
 
         <section className="glass-card rounded-3xl p-6">
           <h2 className="text-xl font-semibold">Cluster State at Time of Analysis</h2>
-          {!metrics.available ? (
+          {!displayMetrics.available ? (
             <div className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-amber-100">
               Prometheus was not reachable. Metrics unavailable. The AI report was generated based on the config change alone.
             </div>
           ) : (
             <div className="mt-6 grid gap-8 md:grid-cols-2 xl:grid-cols-4">
-              <MetricGauge value={metrics.cpu} label="CPU usage" unit="%" />
-              <MetricGauge value={metrics.memory} label="Memory" unit="MB" max={1024} />
-              <MetricGauge value={metrics.pods} label="Pods" unit="Pods" max={10} />
-              <MetricGauge value={metrics.requestRate} label="Request rate" unit="rps" max={500} />
+              <MetricGauge value={displayMetrics.cpu} label="CPU usage" unit="%" />
+              <MetricGauge value={displayMetrics.memory} label="Memory" unit="MB" max={1024} />
+              <MetricGauge value={displayMetrics.pods} label="Pods" unit="Pods" max={10} />
+              <MetricGauge value={displayMetrics.requestRate} label="Request rate" unit="rps" max={500} />
             </div>
           )}
         </section>
