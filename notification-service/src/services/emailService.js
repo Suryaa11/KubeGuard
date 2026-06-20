@@ -4,33 +4,12 @@ const PDFDocument = require('pdfkit')
 const { generateApprovalToken } = require('./approvalToken')
 const logger = require('../utils/logger')
 
-function trimTrailingSlash(url) {
-  return String(url || '').replace(/\/$/, '')
+function trimTrailingSlash(value) {
+  return String(value || '').replace(/\/$/, '')
 }
 
-function publicGatewayUrl() {
-  return (
-    trimTrailingSlash(process.env.PUBLIC_GATEWAY_URL) ||
-    trimTrailingSlash(process.env.FRONTEND_URL) ||
-    trimTrailingSlash(process.env.GATEWAY_URL) ||
-    'https://kubeguard.hmsclinic.online'
-  )
-}
-
-function buildDecisionLink(token) {
-  return `${publicGatewayUrl()}/api/notify/decide?token=${encodeURIComponent(token)}`
-}
-
-function riskMeta(riskScore) {
-  const score = String(riskScore || 'unknown').toLowerCase()
-  const map = {
-    low: { label: 'LOW', emailColor: '#22c55e', pdfRgb: [34, 197, 94] },
-    medium: { label: 'MEDIUM', emailColor: '#f59e0b', pdfRgb: [245, 158, 11] },
-    high: { label: 'HIGH', emailColor: '#f97316', pdfRgb: [249, 115, 22] },
-    critical: { label: 'CRITICAL', emailColor: '#ef4444', pdfRgb: [239, 68, 68] },
-  }
-
-  return map[score] || { label: score.toUpperCase(), emailColor: '#64748b', pdfRgb: [100, 116, 139] }
+function baseUrl() {
+  return trimTrailingSlash(process.env.PUBLIC_GATEWAY_URL || 'https://kubeguard.hmsclinic.online')
 }
 
 function escapeHtml(value) {
@@ -41,14 +20,92 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;')
 }
 
-function stripMarkdown(markdown = '') {
-  return String(markdown || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/[`#>*_]/g, '')
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/^\s*[-+]\s+/gm, '- ')
-    .trim()
+function formatValue(value, fallback = 'N/A') {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function formatNumber(value, digits, fallback = 'N/A') {
+  if (value === undefined || value === null || value === '') return fallback
+  const number = Number(value)
+  if (!Number.isFinite(number)) return formatValue(value, fallback)
+  return number.toFixed(digits)
+}
+
+function shortSha(value) {
+  return String(value || 'unknown').slice(0, 7)
+}
+
+function riskTheme(riskScore) {
+  const themes = {
+    low: {
+      label: 'LOW',
+      bg: '#14532d',
+      color: '#86efac',
+      rgbBg: [20, 83, 45],
+      rgbText: [134, 239, 172],
+    },
+    medium: {
+      label: 'MEDIUM',
+      bg: '#713f12',
+      color: '#fde047',
+      rgbBg: [113, 63, 18],
+      rgbText: [253, 224, 71],
+    },
+    high: {
+      label: 'HIGH',
+      bg: '#7c2d12',
+      color: '#fb923c',
+      rgbBg: [124, 45, 18],
+      rgbText: [251, 146, 60],
+    },
+    critical: {
+      label: 'CRITICAL',
+      bg: '#7f1d1d',
+      color: '#fca5a5',
+      rgbBg: [127, 29, 29],
+      rgbText: [252, 165, 165],
+    },
+  }
+
+  return themes[String(riskScore || '').toLowerCase()] || {
+    label: String(riskScore || 'UNKNOWN').toUpperCase(),
+    bg: '#1e2030',
+    color: '#e5e7eb',
+    rgbBg: [30, 32, 48],
+    rgbText: [229, 231, 235],
+  }
+}
+
+function recommendationTheme(recommendation) {
+  const themes = {
+    approve: {
+      label: '&#10003; APPROVE - Low risk, safe to deploy',
+      text: 'APPROVE - Low risk, safe to deploy',
+      bg: '#14532d',
+      color: '#86efac',
+    },
+    approve_with_caution: {
+      label: '&#9888; APPROVE WITH CAUTION - Review metrics',
+      text: 'APPROVE WITH CAUTION - Review metrics',
+      bg: '#713f12',
+      color: '#fde047',
+    },
+    reject: {
+      label: '&#10007; REJECT - High risk, do not deploy',
+      text: 'REJECT - High risk, do not deploy',
+      bg: '#7f1d1d',
+      color: '#fca5a5',
+    },
+  }
+
+  return themes[String(recommendation || '').toLowerCase()] || {
+    label: 'MANUAL REVIEW REQUIRED',
+    text: 'MANUAL REVIEW REQUIRED',
+    bg: '#1e2030',
+    color: '#e5e7eb',
+  }
 }
 
 function resolveRecipients(adminEmails = []) {
@@ -61,336 +118,388 @@ function resolveRecipients(adminEmails = []) {
   return [...new Set([...fromMessage, ...fromEnv].filter(Boolean))]
 }
 
-function shortSha(sha) {
-  return String(sha || 'unknown').slice(0, 7)
+function stripMarkdown(markdown = '') {
+  return String(markdown || '')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/`/g, '')
+    .replace(/>/g, '')
+    .trim()
 }
 
-function formatValue(value, fallback = 'Unavailable') {
-  if (value === undefined || value === null || value === '') return fallback
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
+function formatPdfDate(value) {
+  const date = value ? new Date(value) : new Date()
+  if (Number.isNaN(date.getTime())) return 'N/A'
+
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const month = date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+  const year = date.getUTCFullYear()
+  const hours = String(date.getUTCHours()).padStart(2, '0')
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0')
+
+  return `${day} ${month} ${year} ${hours}:${minutes} UTC`
 }
 
-function getPathValue(source, path) {
-  return path.split('.').reduce((current, part) => current?.[part], source)
+function semanticRows(report) {
+  return Array.isArray(report.semanticChanges) ? report.semanticChanges : []
 }
 
-function firstValue(source, paths, fallback = 'Unavailable') {
-  for (const path of paths) {
-    const value = getPathValue(source, path)
-    if (value !== undefined && value !== null && value !== '') {
-      return formatValue(value, fallback)
-    }
-  }
-
-  return fallback
+function liveMetrics(report) {
+  return report.liveMetrics || {}
 }
 
-function clusterMetrics(report) {
-  const live = report.liveMetrics || report.metrics || {}
-  const historicalPeak = report.historicalPeak || {}
-
-  return {
-    cpuUsagePercent: firstValue(live, ['cpuUsagePercent', 'cpuPercent', 'cpu', 'cpuUsage', 'current.cpu']),
-    memoryUsageMB: firstValue(live, ['memoryUsageMB', 'memoryUsageMb', 'memoryMB', 'memoryMb', 'memory', 'current.memory']),
-    activePodCount: firstValue(live, ['activePodCount', 'podCount', 'pods', 'current.pods']),
-    peakCpuUsagePercent: firstValue(historicalPeak, ['cpuUsagePercent', 'cpuPercent', 'peakCpuPercent', 'cpu', 'peakCpu']),
-    peakMemoryUsageMB: firstValue(historicalPeak, ['memoryUsageMB', 'memoryUsageMb', 'memoryMB', 'memoryMb', 'peakMemory']),
-  }
+function peakMetrics(report) {
+  return report.historicalPeak || {}
 }
 
-function semanticChangesRows(report) {
-  const changes = Array.isArray(report.semanticChanges) ? report.semanticChanges : []
-  return changes.map((change) => ({
-    fieldPath: change.fieldPath || change.path || change.field || change.key || 'unknown',
-    oldValue: formatValue(change.oldValue, ''),
-    newValue: formatValue(change.newValue, ''),
-    changeType: change.changeType || 'modified',
-    isCriticalField: Boolean(change.isCriticalField),
-  }))
-}
+function buildChangesTable(report) {
+  const changes = semanticRows(report)
 
-function recommendationLabel(recommendation) {
-  return String(recommendation || 'manual review required').replace(/_/g, ' ').toUpperCase()
-}
-
-function buildChangesTableHtml(report) {
-  const rows = semanticChangesRows(report)
-
-  if (!rows.length) {
-    return '<p style="margin:0;color:#9ca3af">No structural changes detected</p>'
+  if (!changes.length) {
+    return '<div style="color:#6b7280;font-size:13px;">No structural changes detected in YAML.</div>'
   }
 
   return `
-    <table style="border-collapse:collapse;width:100%;font-size:13px">
-      <thead>
-        <tr>
-          <th style="padding:10px;border-bottom:1px solid #2a2f3a;color:#9ca3af;text-align:left">Field</th>
-          <th style="padding:10px;border-bottom:1px solid #2a2f3a;color:#9ca3af;text-align:left">Old Value</th>
-          <th style="padding:10px;border-bottom:1px solid #2a2f3a;color:#9ca3af;text-align:left">New Value</th>
-          <th style="padding:10px;border-bottom:1px solid #2a2f3a;color:#9ca3af;text-align:left">Type</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows
-          .map((change) => {
-            const fieldColor = change.isCriticalField ? '#f97316' : '#e5e7eb'
-            return `
-              <tr>
-                <td style="padding:10px;border-bottom:1px solid #20242d;color:${fieldColor};font-weight:700">${escapeHtml(change.fieldPath)}</td>
-                <td style="padding:10px;border-bottom:1px solid #20242d;color:#fca5a5">${escapeHtml(change.oldValue)}</td>
-                <td style="padding:10px;border-bottom:1px solid #20242d;color:#86efac">${escapeHtml(change.newValue)}</td>
-                <td style="padding:10px;border-bottom:1px solid #20242d;color:#cbd5e1;text-transform:uppercase">${escapeHtml(change.changeType)}</td>
-              </tr>`
-          })
-          .join('')}
-      </tbody>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#0f1117;border-radius:8px;overflow:hidden;">
+      <tr style="background:#1e2030;">
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Field</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Old Value</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">New Value</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Type</td>
+      </tr>
+      ${changes
+        .map((change) => {
+          const border = change.isCriticalField ? 'border-left:3px solid #f97316;' : ''
+          const field = `${change.isCriticalField ? '&#9888; ' : ''}${escapeHtml(change.fieldPath || 'unknown')}`
+          return `
+            <tr style="background:#0f1117;${border}">
+              <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;">${field}</td>
+              <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatValue(change.oldValue, ''))}</td>
+              <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatValue(change.newValue, ''))}</td>
+              <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;">${escapeHtml(change.changeType || 'modified')}</td>
+            </tr>`
+        })
+        .join('')}
     </table>`
 }
 
-function buildHtml(report, project, approveLink, rejectLink) {
-  const risk = riskMeta(report.riskScore)
-  const metrics = clusterMetrics(report)
+function buildHtmlEmail({ report, project, approveUrl, rejectUrl }) {
+  const risk = riskTheme(report.riskScore)
+  const recommendation = recommendationTheme(report.recommendation)
+  const live = liveMetrics(report)
+  const peak = peakMetrics(report)
   const projectName = project.name || report.projectName || report.projectId || 'Unknown project'
-  const commitMessage = report.commitMessage || report.message || 'No commit message provided'
-  const author = report.author || report.commitAuthor || 'Unknown'
-  const authorEmail = report.authorEmail || report.commitAuthorEmail || ''
-  const branch = report.branch || project.branch || 'unknown'
-  const timestamp = formatValue(report.generatedAt || new Date().toISOString())
+  const timestamp = formatPdfDate(report.generatedAt || new Date())
+  const author = report.authorEmail
+    ? `${formatValue(report.author, 'Unknown')} &lt;${escapeHtml(report.authorEmail)}&gt;`
+    : formatValue(report.author, 'Unknown')
 
-  return `
-    <div style="background:#0f1117;margin:0;padding:32px 16px;color:#e5e7eb;font-family:Inter,Segoe UI,Arial,sans-serif">
-      <div style="max-width:640px;margin:0 auto;background:#151923;border:1px solid #2a2f3a;border-radius:18px;overflow:hidden">
-        <div style="padding:28px 30px;border-bottom:1px solid #2a2f3a;background:#121620">
-          <div style="color:#6366f1;font-weight:900;font-size:22px;letter-spacing:.04em">KubeGuard AI</div>
-          <div style="color:#9ca3af;margin-top:4px">Pre-deployment Risk Report</div>
-        </div>
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#0f1117;font-family:system-ui,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0f1117;padding:40px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#1a1d27;border-radius:12px;overflow:hidden;">
 
-        <div style="padding:28px 30px">
-          <h2 style="margin:0 0 14px;color:#f9fafb;font-size:18px">Commit Info</h2>
-          <table style="border-collapse:collapse;width:100%;font-size:14px;margin-bottom:26px">
-            <tr><td style="padding:7px 0;color:#9ca3af;width:120px">Project</td><td style="padding:7px 0;color:#f9fafb">${escapeHtml(projectName)}</td></tr>
-            <tr><td style="padding:7px 0;color:#9ca3af">Commit</td><td style="padding:7px 0;color:#f9fafb;font-family:Consolas,monospace">${escapeHtml(shortSha(report.commitSha))}</td></tr>
-            <tr><td style="padding:7px 0;color:#9ca3af">Message</td><td style="padding:7px 0;color:#f9fafb">${escapeHtml(commitMessage)}</td></tr>
-            <tr><td style="padding:7px 0;color:#9ca3af">Author</td><td style="padding:7px 0;color:#f9fafb">${escapeHtml(author)} &lt;${escapeHtml(authorEmail)}&gt;</td></tr>
-            <tr><td style="padding:7px 0;color:#9ca3af">Branch</td><td style="padding:7px 0;color:#f9fafb">${escapeHtml(branch)}</td></tr>
-          </table>
+  <tr><td style="background:#1e2030;padding:32px 40px;border-bottom:1px solid #2d3048;">
+    <div style="font-size:24px;font-weight:700;color:#6366f1;letter-spacing:2px;">KUBEGUARD AI</div>
+    <div style="font-size:13px;color:#6b7280;margin-top:4px;">Pre-Deployment Risk Report</div>
+  </td></tr>
 
-          <div style="text-align:center;margin:26px 0">
-            <div style="display:inline-block;background:${risk.emailColor};color:#111827;border-radius:999px;padding:14px 34px;font-size:26px;font-weight:900;letter-spacing:.08em">
-              ${escapeHtml(risk.label)}
-            </div>
-          </div>
+  <tr><td style="padding:32px 40px 0;">
+    <div style="display:inline-block;padding:8px 24px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:2px;background:${risk.bg};color:${risk.color};">
+      ${risk.label} RISK
+    </div>
+  </td></tr>
 
-          <h2 style="margin:28px 0 12px;color:#f9fafb;font-size:18px">What Changed</h2>
-          ${buildChangesTableHtml(report)}
+  <tr><td style="padding:24px 40px 0;">
+    <table width="100%" style="border-collapse:collapse;">
+      <tr>
+        <td style="padding:8px 0;color:#6b7280;font-size:13px;width:140px;">Project</td>
+        <td style="padding:8px 0;color:#e5e7eb;font-size:13px;">${escapeHtml(projectName)}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#6b7280;font-size:13px;">Commit</td>
+        <td style="padding:8px 0;color:#a5b4fc;font-size:13px;font-family:monospace;">${escapeHtml(shortSha(report.commitSha))}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#6b7280;font-size:13px;">Message</td>
+        <td style="padding:8px 0;color:#e5e7eb;font-size:13px;">${escapeHtml(report.commitMessage || report.message || '')}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#6b7280;font-size:13px;">Author</td>
+        <td style="padding:8px 0;color:#e5e7eb;font-size:13px;">${author}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#6b7280;font-size:13px;">Branch</td>
+        <td style="padding:8px 0;color:#e5e7eb;font-size:13px;">${escapeHtml(project.branch || report.branch || '')}</td>
+      </tr>
+    </table>
+  </td></tr>
 
-          <h2 style="margin:28px 0 12px;color:#f9fafb;font-size:18px">Cluster State at Analysis</h2>
-          <table style="border-collapse:collapse;width:100%;font-size:14px">
-            <tr><td style="padding:8px 0;color:#9ca3af">CPU</td><td style="padding:8px 0;color:#f9fafb">${escapeHtml(metrics.cpuUsagePercent)}%</td></tr>
-            <tr><td style="padding:8px 0;color:#9ca3af">Memory</td><td style="padding:8px 0;color:#f9fafb">${escapeHtml(metrics.memoryUsageMB)} MB</td></tr>
-            <tr><td style="padding:8px 0;color:#9ca3af">Active Pods</td><td style="padding:8px 0;color:#f9fafb">${escapeHtml(metrics.activePodCount)}</td></tr>
-            <tr><td style="padding:8px 0;color:#9ca3af">Historical Peak CPU</td><td style="padding:8px 0;color:#f9fafb">${escapeHtml(metrics.peakCpuUsagePercent)}%</td></tr>
-            <tr><td style="padding:8px 0;color:#9ca3af">Historical Peak Memory</td><td style="padding:8px 0;color:#f9fafb">${escapeHtml(metrics.peakMemoryUsageMB)} MB</td></tr>
-          </table>
+  <tr><td style="padding:24px 40px 0;">
+    <div style="font-size:14px;font-weight:600;color:#e5e7eb;margin-bottom:12px;">WHAT CHANGED</div>
+    ${buildChangesTable(report)}
+  </td></tr>
 
-          <h2 style="margin:28px 0 12px;color:#f9fafb;font-size:18px">AI Recommendation</h2>
-          <div style="background:#10141d;border:1px solid #2a2f3a;border-radius:12px;padding:16px">
-            <div style="font-size:18px;font-weight:900;color:#f9fafb;margin-bottom:8px">${escapeHtml(recommendationLabel(report.recommendation))}</div>
-            <div style="color:#cbd5e1;line-height:1.55">${escapeHtml(report.riskReason || 'No risk reason provided.')}</div>
-          </div>
+  <tr><td style="padding:24px 40px 0;">
+    <div style="font-size:14px;font-weight:600;color:#e5e7eb;margin-bottom:12px;">CLUSTER STATE AT TIME OF ANALYSIS</div>
+    <table width="100%" style="border-collapse:collapse;background:#0f1117;border-radius:8px;overflow:hidden;">
+      <tr style="background:#1e2030;">
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">CPU Usage</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Memory</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Active Pods</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Peak CPU</td>
+        <td style="padding:10px 16px;color:#6b7280;font-size:12px;">Peak Memory</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatNumber(live.cpuUsagePercent, 2))}%</td>
+        <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatNumber(live.memoryUsageMB, 0))} MB</td>
+        <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatValue(live.activePodCount))}</td>
+        <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatNumber(peak.cpuUsagePercent, 2))}%</td>
+        <td style="padding:10px 16px;color:#e5e7eb;font-size:13px;font-family:monospace;">${escapeHtml(formatNumber(peak.memoryUsageMB, 0))} MB</td>
+      </tr>
+    </table>
+  </td></tr>
 
-          <div style="margin:30px 0 12px">
-            <a href="${approveLink}" style="display:block;background:#16a34a;color:#ffffff;text-align:center;text-decoration:none;border-radius:12px;padding:16px;font-weight:900;margin-bottom:12px">✓ APPROVE DEPLOYMENT</a>
-            <a href="${rejectLink}" style="display:block;background:#dc2626;color:#ffffff;text-align:center;text-decoration:none;border-radius:12px;padding:16px;font-weight:900">✕ REJECT &amp; HOLD</a>
-          </div>
+  <tr><td style="padding:24px 40px 0;">
+    <div style="font-size:14px;font-weight:600;color:#e5e7eb;margin-bottom:12px;">AI RISK ANALYSIS</div>
+    <div style="background:#0f1117;border-left:3px solid #6366f1;padding:16px;border-radius:4px;color:#d1d5db;font-size:13px;line-height:1.7;">${escapeHtml(report.riskReason || '')}</div>
+    <div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:${recommendation.bg};color:${recommendation.color};font-size:13px;font-weight:600;">
+      Recommendation: ${recommendation.label}
+    </div>
+  </td></tr>
 
-          <p style="color:#fbbf24;font-size:13px;line-height:1.5">This action will affect production. Approve only if you have reviewed the full report.</p>
-        </div>
+  <tr><td style="padding:32px 40px;">
+    <div style="font-size:12px;color:#6b7280;margin-bottom:16px;text-align:center;">
+      &#9888; This action affects production. Review the report before deciding.
+    </div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="48%" align="center">
+          <a href="${approveUrl}" style="display:block;padding:16px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;text-align:center;">
+            &#10003; APPROVE DEPLOYMENT
+          </a>
+        </td>
+        <td width="4%"></td>
+        <td width="48%" align="center">
+          <a href="${rejectUrl}" style="display:block;padding:16px;background:#dc2626;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;text-align:center;">
+            &#10007; REJECT &amp; HOLD
+          </a>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
-        <div style="padding:18px 30px;border-top:1px solid #2a2f3a;color:#6b7280;font-size:12px;text-align:center">
-          Generated by KubeGuard AI • ${escapeHtml(timestamp)} • This email was sent to admins only
-        </div>
-      </div>
-    </div>`
+  <tr><td style="padding:24px 40px;border-top:1px solid #2d3048;text-align:center;">
+    <div style="color:#4b5563;font-size:12px;">
+      Generated by KubeGuard AI &bull; ${escapeHtml(timestamp)} &bull; Sent to authorized admins only
+    </div>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`
 }
 
-function pdfColor(doc, rgb) {
+function setFill(doc, rgb) {
   doc.fillColor(rgb)
+}
+
+function setStroke(doc, rgb) {
   doc.strokeColor(rgb)
 }
 
-function addFooter(doc) {
-  const pageNumber = doc.bufferedPageRange().count
-  doc.fontSize(8)
-  pdfColor(doc, [100, 116, 139])
-  doc.text(`Page ${pageNumber}`, 50, 790, { width: 245, align: 'left' })
-  doc.text('KubeGuard AI - Confidential', 300, 790, { width: 245, align: 'right' })
-}
-
-function ensureSpace(doc, neededHeight) {
-  if (doc.y + neededHeight > 760) {
+function ensureSpace(doc, height) {
+  if (doc.y + height > 760) {
     doc.addPage()
   }
 }
 
 function sectionTitle(doc, title) {
-  ensureSpace(doc, 38)
+  ensureSpace(doc, 32)
   doc.moveDown(1)
-  pdfColor(doc, [17, 24, 39])
+  setFill(doc, [99, 102, 241])
   doc.font('Helvetica-Bold').fontSize(14).text(title)
-  doc.moveDown(0.5)
+  doc.moveDown(0.6)
+}
+
+function drawHeader(doc) {
+  doc.rect(0, 0, doc.page.width, 80).fill([30, 32, 48])
+  setFill(doc, [99, 102, 241])
+  doc.font('Helvetica-Bold').fontSize(28).text('KUBEGUARD AI', 50, 22)
+  setFill(doc, [107, 114, 128])
+  doc.font('Helvetica').fontSize(12).text('Pre-Deployment Risk Report', 50, 54)
+  doc.y = 110
+}
+
+function drawMetadata(doc, report, project) {
+  ensureSpace(doc, 104)
+  const y = doc.y
+  doc.rect(50, y, 495, 94).fill([26, 29, 39])
+  setFill(doc, [209, 213, 219])
+  doc.font('Helvetica-Bold').fontSize(10).text('Report ID:', 70, y + 18)
+  doc.font('Helvetica').text(formatValue(report.reportId || report.eventId), 170, y + 18)
+  doc.font('Helvetica-Bold').text('Generated:', 70, y + 42)
+  doc.font('Helvetica').text(formatPdfDate(report.generatedAt), 170, y + 42)
+  doc.font('Helvetica-Bold').text('Project:', 70, y + 66)
+  doc.font('Helvetica').text(formatValue(project.name || report.projectName || report.projectId), 170, y + 66)
+  doc.font('Helvetica-Bold').text('ArgoCD App:', 330, y + 66)
+  doc.font('Helvetica').text(formatValue(project.argocdAppName), 420, y + 66)
+  doc.y = y + 104
 }
 
 function labelValue(doc, label, value) {
-  ensureSpace(doc, 22)
-  pdfColor(doc, [17, 24, 39])
+  ensureSpace(doc, 20)
+  setFill(doc, [209, 213, 219])
   doc.font('Helvetica-Bold').fontSize(10).text(`${label}: `, { continued: true })
   doc.font('Helvetica').text(formatValue(value))
 }
 
-function drawMetadataBox(doc, report, project) {
-  ensureSpace(doc, 86)
-  const y = doc.y
-  doc.rect(50, y, 495, 76).fill([243, 244, 246])
-  pdfColor(doc, [17, 24, 39])
-  doc.font('Helvetica-Bold').fontSize(10).text('Report ID', 65, y + 12)
-  doc.font('Helvetica').text(formatValue(report.reportId || report.eventId), 170, y + 12)
-  doc.font('Helvetica-Bold').text('Generated At', 65, y + 34)
-  doc.font('Helvetica').text(formatValue(report.generatedAt || new Date().toISOString()), 170, y + 34)
-  doc.font('Helvetica-Bold').text('Project Name', 65, y + 56)
-  doc.font('Helvetica').text(formatValue(project.name || report.projectName || report.projectId), 170, y + 56)
-  doc.y = y + 88
-}
-
 function drawRiskAssessment(doc, report) {
-  const risk = riskMeta(report.riskScore)
+  const theme = riskTheme(report.riskScore)
+  ensureSpace(doc, 132)
   const y = doc.y
-  doc.rect(50, y, 495, 38).fill(risk.pdfRgb)
-  pdfColor(doc, [255, 255, 255])
-  doc.font('Helvetica-Bold').fontSize(18).text(`RISK: ${risk.label}`, 65, y + 10)
-  doc.y = y + 50
-  pdfColor(doc, [17, 24, 39])
-  doc.font('Helvetica').fontSize(10).text(formatValue(report.riskReason || 'No risk reason provided.'), {
+  doc.rect(50, y, 495, 50).fill(theme.rgbBg)
+  setFill(doc, theme.rgbText)
+  doc.font('Helvetica-Bold').fontSize(20).text(`RISK: ${theme.label}`, 68, y + 14)
+  doc.y = y + 64
+  setFill(doc, [209, 213, 219])
+  doc.font('Helvetica').fontSize(10).text(formatValue(report.riskReason, 'No risk reason provided.'), {
     width: 495,
-    align: 'left',
+    lineGap: 3,
   })
-  doc.moveDown(0.6)
-  labelValue(doc, 'Recommendation', recommendationLabel(report.recommendation))
+  doc.moveDown(0.8)
+  doc.font('Helvetica-Bold').text(`Recommendation: ${recommendationTheme(report.recommendation).text}`)
 }
 
 function drawChangesTable(doc, report) {
-  const rows = semanticChangesRows(report)
-  const columns = [
-    { label: 'Field Path', x: 50, width: 150 },
-    { label: 'Old Value', x: 200, width: 95 },
-    { label: 'New Value', x: 295, width: 95 },
-    { label: 'Change Type', x: 390, width: 80 },
-    { label: 'Critical', x: 470, width: 75 },
+  const rows = semanticRows(report)
+  const col = [
+    { title: 'Field Path', x: 50, w: 150 },
+    { title: 'Old Value', x: 200, w: 95 },
+    { title: 'New Value', x: 295, w: 95 },
+    { title: 'Type', x: 390, w: 75 },
+    { title: 'Critical', x: 465, w: 80 },
   ]
 
   if (!rows.length) {
+    setFill(doc, [209, 213, 219])
     doc.font('Helvetica').fontSize(10).text('No structural changes detected')
     return
   }
 
-  ensureSpace(doc, 40)
+  ensureSpace(doc, 30)
   let y = doc.y
-  doc.rect(50, y, 495, 24).fill([31, 41, 55])
-  pdfColor(doc, [255, 255, 255])
+  doc.rect(50, y, 495, 24).fill([30, 32, 48])
+  setFill(doc, [107, 114, 128])
   doc.font('Helvetica-Bold').fontSize(8)
-  columns.forEach((column) => doc.text(column.label, column.x + 4, y + 8, { width: column.width - 8 }))
-  y += 24
+  col.forEach((c) => doc.text(c.title, c.x + 4, y + 8, { width: c.w - 8 }))
+  doc.y = y + 24
 
   rows.forEach((row, index) => {
     ensureSpace(doc, 34)
     y = doc.y
-    doc.rect(50, y, 495, 30).fill(index % 2 === 0 ? [249, 250, 251] : [243, 244, 246])
-    pdfColor(doc, [17, 24, 39])
+    doc.rect(50, y, 495, 32).fill(index % 2 === 0 ? [15, 17, 23] : [26, 29, 39])
+    if (row.isCriticalField) {
+      doc.rect(50, y, 3, 32).fill([249, 115, 22])
+    }
+    setFill(doc, [229, 231, 235])
     doc.font('Helvetica').fontSize(7)
-    doc.text(row.fieldPath, 54, y + 7, { width: 142, height: 18 })
-    doc.text(row.oldValue, 204, y + 7, { width: 87, height: 18 })
-    doc.text(row.newValue, 299, y + 7, { width: 87, height: 18 })
-    doc.text(row.changeType, 394, y + 7, { width: 72, height: 18 })
-    doc.text(row.isCriticalField ? '!' : 'No', 474, y + 7, { width: 67, height: 18 })
-    doc.y = y + 30
+    doc.text(row.fieldPath || 'unknown', 56, y + 8, { width: 140, height: 18 })
+    doc.text(formatValue(row.oldValue, ''), 204, y + 8, { width: 87, height: 18 })
+    doc.text(formatValue(row.newValue, ''), 299, y + 8, { width: 87, height: 18 })
+    doc.text(formatValue(row.changeType, ''), 394, y + 8, { width: 67, height: 18 })
+    doc.text(row.isCriticalField ? '!' : 'No', 469, y + 8, { width: 72, height: 18 })
+    doc.y = y + 32
   })
 }
 
-function drawMetricsColumns(doc, report) {
-  const metrics = clusterMetrics(report)
-  const y = doc.y
-  const leftX = 50
-  const rightX = 305
-
-  ensureSpace(doc, 105)
-  doc.font('Helvetica-Bold').fontSize(11)
-  pdfColor(doc, [17, 24, 39])
-  doc.text('Live Metrics', leftX, y)
-  doc.text('Historical Peak', rightX, y)
-  doc.font('Helvetica').fontSize(10)
-  doc.text(`CPU: ${metrics.cpuUsagePercent}%`, leftX, y + 24)
-  doc.text(`Memory: ${metrics.memoryUsageMB} MB`, leftX, y + 44)
-  doc.text(`Active Pods: ${metrics.activePodCount}`, leftX, y + 64)
-  doc.text(`Peak CPU: ${metrics.peakCpuUsagePercent}%`, rightX, y + 24)
-  doc.text(`Peak Memory: ${metrics.peakMemoryUsageMB} MB`, rightX, y + 44)
-  doc.y = y + 92
+function drawMetricBox(doc, x, y, title, rows) {
+  doc.rect(x, y, 235, 132).fill([26, 29, 39])
+  setFill(doc, [99, 102, 241])
+  doc.font('Helvetica-Bold').fontSize(10).text(title, x + 16, y + 16)
+  setFill(doc, [209, 213, 219])
+  doc.font('Helvetica').fontSize(9)
+  rows.forEach((row, index) => {
+    doc.text(row, x + 16, y + 42 + index * 16)
+  })
 }
 
-function generateReportPdf(report, project) {
+function drawClusterMetrics(doc, report) {
+  const live = liveMetrics(report)
+  const peak = peakMetrics(report)
+  ensureSpace(doc, 148)
+  const y = doc.y
+  drawMetricBox(doc, 50, y, 'LIVE METRICS', [
+    `CPU: ${formatNumber(live.cpuUsagePercent, 2)}%`,
+    `Memory: ${formatNumber(live.memoryUsageMB, 0)} MB`,
+    `Pods: ${formatValue(live.activePodCount)}`,
+    `Requests/sec: ${formatNumber(live.requestsPerSecond, 2)}`,
+    `Error Rate: ${formatNumber(live.errorRatePercent, 2)}%`,
+    `P95 Latency: ${formatNumber(live.p95LatencyMs, 0)} ms`,
+  ])
+  drawMetricBox(doc, 310, y, 'HISTORICAL PEAK (30 days)', [
+    `Peak CPU: ${formatNumber(peak.cpuUsagePercent, 2)}%`,
+    `Peak Memory: ${formatNumber(peak.memoryUsageMB, 0)} MB`,
+    `Peak Date: ${formatValue(peak.peakDate)}`,
+  ])
+  doc.y = y + 148
+}
+
+function addFooters(doc) {
+  const range = doc.bufferedPageRange()
+  for (let index = range.start; index < range.start + range.count; index += 1) {
+    doc.switchToPage(index)
+    setStroke(doc, [45, 48, 72])
+    doc.lineWidth(1).moveTo(50, 775).lineTo(545, 775).stroke()
+    setFill(doc, [75, 85, 99])
+    doc.font('Helvetica').fontSize(8)
+    doc.text('KubeGuard AI - Confidential', 50, 784, { width: 250, align: 'left' })
+    doc.text(`Page ${index + 1} of ${range.count}`, 295, 784, { width: 250, align: 'right' })
+  }
+}
+
+function generatePdf(report, project) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-      size: 'A4',
-      margin: 50,
-      bufferPages: true,
-    })
+    const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true })
     const chunks = []
 
     doc.on('data', (chunk) => chunks.push(chunk))
     doc.on('error', reject)
     doc.on('end', () => resolve(Buffer.concat(chunks)))
 
-    pdfColor(doc, [99, 102, 241])
-    doc.font('Helvetica-Bold').fontSize(24).text('KUBEGUARD AI')
-    pdfColor(doc, [107, 114, 128])
-    doc.font('Helvetica').fontSize(14).text('Pre-Deployment Risk Report')
-    doc.moveDown(0.8)
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke([209, 213, 219])
-    doc.moveDown(1)
+    drawHeader(doc)
+    drawMetadata(doc, report, project)
 
-    drawMetadataBox(doc, report, project)
-
-    sectionTitle(doc, 'Commit Details')
-    labelValue(doc, 'SHA', report.commitSha || 'unknown')
-    labelValue(doc, 'Message', report.commitMessage || report.message || 'unknown')
-    labelValue(doc, 'Author', `${report.author || report.commitAuthor || 'Unknown'} <${report.authorEmail || report.commitAuthorEmail || ''}>`)
-    labelValue(doc, 'Branch', report.branch || project.branch || 'unknown')
-
-    sectionTitle(doc, 'Risk Assessment')
+    sectionTitle(doc, 'RISK ASSESSMENT')
     drawRiskAssessment(doc, report)
 
-    sectionTitle(doc, 'What Changed')
+    sectionTitle(doc, 'COMMIT DETAILS')
+    labelValue(doc, 'SHA', report.commitSha)
+    labelValue(doc, 'Message', report.commitMessage || report.message)
+    labelValue(doc, 'Author', `${formatValue(report.author, 'Unknown')} <${formatValue(report.authorEmail, '')}>`)
+    labelValue(doc, 'Branch', project.branch || report.branch)
+
+    sectionTitle(doc, 'WHAT CHANGED')
     drawChangesTable(doc, report)
 
-    sectionTitle(doc, 'Cluster Metrics')
-    drawMetricsColumns(doc, report)
+    sectionTitle(doc, 'CLUSTER METRICS')
+    drawClusterMetrics(doc, report)
 
-    sectionTitle(doc, 'AI Analysis')
-    pdfColor(doc, [17, 24, 39])
-    doc.font('Helvetica').fontSize(10).text(
-      stripMarkdown(report.reportMarkdown || report.riskReason || 'No AI report text provided.'),
-      { width: 495, align: 'left' }
-    )
+    sectionTitle(doc, 'AI ANALYSIS')
+    setFill(doc, [209, 213, 219])
+    doc.font('Helvetica').fontSize(11).text(stripMarkdown(report.reportMarkdown || report.riskReason || ''), {
+      width: 500,
+      lineGap: 4,
+    })
 
-    const range = doc.bufferedPageRange()
-    for (let index = range.start; index < range.start + range.count; index += 1) {
-      doc.switchToPage(index)
-      doc.fontSize(8)
-      pdfColor(doc, [100, 116, 139])
-      doc.text(`Page ${index + 1}`, 50, 790, { width: 245, align: 'left' })
-      doc.text('KubeGuard AI - Confidential', 300, 790, { width: 245, align: 'right' })
-    }
-
+    addFooters(doc)
     doc.end()
   })
 }
@@ -407,7 +516,7 @@ function createTransporter() {
   })
 }
 
-async function sendApprovalEmail(report, project, adminEmails = []) {
+async function sendApprovalEmail(report, project, adminEmails) {
   const recipients = resolveRecipients(adminEmails)
   if (!recipients.length) {
     logger.warn('No admin email recipients configured')
@@ -416,22 +525,23 @@ async function sendApprovalEmail(report, project, adminEmails = []) {
 
   const approveToken = generateApprovalToken(report.eventId, 'approved')
   const rejectToken = generateApprovalToken(report.eventId, 'rejected')
-  const approveLink = buildDecisionLink(approveToken)
-  const rejectLink = buildDecisionLink(rejectToken)
+  const base = baseUrl()
+  const approveUrl = `${base}/api/notify/decide?token=${approveToken}`
+  const rejectUrl = `${base}/api/notify/decide?token=${rejectToken}`
   const projectName = project.name || report.projectName || report.projectId || 'Unknown project'
-  const subject = `KubeGuard - ${riskMeta(report.riskScore).label} risk - ${projectName}`
-  const htmlContent = buildHtml(report, project, approveLink, rejectLink)
-  const pdfBuffer = await generateReportPdf(report, project)
+  const subject = `KubeGuard AI - ${riskTheme(report.riskScore).label} risk - ${projectName}`
+  const html = buildHtmlEmail({ report, project, approveUrl, rejectUrl })
+  const pdf = await generatePdf(report, project)
   const provider = process.env.EMAIL_PROVIDER || 'smtp'
 
   if (provider === 'console') {
     recipients.forEach((recipient) => {
       console.log(`[EMAIL] TO: ${recipient}`)
       console.log(`[EMAIL] SUBJECT: ${subject}`)
-      console.log(`[EMAIL] APPROVE LINK: ${approveLink}`)
-      console.log(`[EMAIL] REJECT LINK: ${rejectLink}`)
-      console.log(`[EMAIL] PDF ATTACHMENT BYTES: ${pdfBuffer.length}`)
-      console.log(`[EMAIL] BODY: ${htmlContent}`)
+      console.log(`[EMAIL] APPROVE LINK: ${approveUrl}`)
+      console.log(`[EMAIL] REJECT LINK: ${rejectUrl}`)
+      console.log(`[EMAIL] PDF ATTACHMENT BYTES: ${pdf.length}`)
+      console.log(`[EMAIL] BODY: ${html}`)
     })
 
     logger.info(`Email rendered (console) for event: ${report.eventId}`)
@@ -443,11 +553,11 @@ async function sendApprovalEmail(report, project, adminEmails = []) {
     from: process.env.EMAIL_FROM || process.env.SMTP_USER,
     to: recipients.join(','),
     subject,
-    html: htmlContent,
+    html,
     attachments: [
       {
         filename: `kubeguard-risk-report-${report.eventId || Date.now()}.pdf`,
-        content: pdfBuffer,
+        content: pdf,
         contentType: 'application/pdf',
       },
     ],
@@ -457,4 +567,4 @@ async function sendApprovalEmail(report, project, adminEmails = []) {
   return { success: true, provider: 'smtp', recipients }
 }
 
-module.exports = { sendApprovalEmail, buildHtml, resolveRecipients, generateReportPdf }
+module.exports = { sendApprovalEmail }

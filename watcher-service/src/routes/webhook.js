@@ -2,12 +2,7 @@ const express = require('express')
 const axios = require('axios')
 const Event = require('../models/Event')
 const { verifyGithubSignature } = require('../services/hmac')
-const {
-  buildRawDiff,
-  extractAuthorInfo,
-  filterMonitoredFiles,
-  parseSemanticChanges,
-} = require('../services/diffParser')
+const { buildRawDiff, filterMonitoredFiles, parseSemanticChanges } = require('../services/diffParser')
 const { pauseArgocdSync } = require('../services/argocd')
 const { triggerAnalysis } = require('../services/analysisClient')
 const { BadRequestError, NotFoundError, UnauthorizedError } = require('../utils/errors')
@@ -104,7 +99,6 @@ router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) 
     }
 
     const latestCommit = commits[commits.length - 1] || payload.head_commit || {}
-    const authorInfo = extractAuthorInfo(payload)
     const semanticChanges = await parseSemanticChanges(payload, project, monitoredChangedFiles)
     const rawDiff = buildRawDiff(commits, monitoredChangedFiles)
 
@@ -115,10 +109,18 @@ router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) 
       projectName: project.name || project.projectName || 'Unknown project',
       projectOwnerId: getProjectOwnerId(project),
       commitSha: payload.after || latestCommit.id || 'unknown',
-      commitMessage: latestCommit.message || '',
-      commitUrl: payload.head_commit?.url || latestCommit.url || payload.compare || '',
-      author: authorInfo.author,
-      authorEmail: authorInfo.authorEmail,
+      commitMessage: payload.head_commit?.message || payload.commits?.[0]?.message || '',
+      commitUrl: payload.head_commit?.url || payload.commits?.[0]?.url || '',
+      author:
+        payload.head_commit?.author?.name ||
+        payload.commits?.[0]?.author?.name ||
+        payload.pusher?.name ||
+        'Unknown',
+      authorEmail:
+        payload.head_commit?.author?.email ||
+        payload.commits?.[0]?.author?.email ||
+        payload.pusher?.email ||
+        '',
       changedFiles,
       monitoredChangedFiles,
       semanticChanges,
