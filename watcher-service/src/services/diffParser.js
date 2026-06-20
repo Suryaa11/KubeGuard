@@ -97,7 +97,7 @@ async function fetchGithubFile({ owner, repo, filePath, ref }) {
 
 function parseYamlContent(content) {
   if (!content) return undefined
-  const parsed = yaml.load(content)
+  const docs = yaml.loadAll(content); const parsed = docs.length === 1 ? docs[0] : docs.reduce((acc, doc) => ({ ...acc, ...doc }), {})
   return parsed === null ? undefined : parsed
 }
 
