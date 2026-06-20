@@ -99,7 +99,7 @@ router.post('/:projectId', express.raw({ type: '*/*' }), async (req, res, next) 
     }
 
     const latestCommit = commits[commits.length - 1] || payload.head_commit || {}
-    const semanticChanges = parseSemanticChanges(commits, monitoredChangedFiles)
+    const semanticChanges = await parseSemanticChanges(payload, project, monitoredChangedFiles)
     const rawDiff = buildRawDiff(commits, monitoredChangedFiles)
 
     const pausePromise = pauseArgocdSync(project.argocdUrl, project.argocdToken, project.argocdAppName)
