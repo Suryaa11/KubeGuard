@@ -1,4 +1,3 @@
-
 FROM node:20-alpine AS builder
 WORKDIR /app
 
@@ -13,7 +12,7 @@ ENV VITE_AZURE_REDIRECT_URI=$VITE_AZURE_REDIRECT_URI
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY . .
 RUN npm run build
 
