@@ -9,4 +9,4 @@ coverage/
 .env
 .env.*
 !.env.example
-.env.docker
+!.env.docker
