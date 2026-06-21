@@ -85,8 +85,8 @@ export const ReportPage = () => {
           </div>
           <div className="mt-6 rounded-2xl border border-border bg-white/5 p-4 text-sm text-text-secondary">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="h-10 w-10 rounded-full bg-indigo-500/20 text-center leading-10 text-indigo-200">{event?.authorName?.[0] || 'A'}</span>
-              <span>{event?.authorName || 'Unknown author'}</span>
+              <span className="h-10 w-10 rounded-full bg-indigo-500/20 text-center leading-10 text-indigo-200">{event?.author?.[0] || 'A'}</span>
+              <span>{event?.author || 'Unknown author'}</span>
               <code className="font-mono text-indigo-200">{event?.commitSha}</code>
               <span>{event?.commitMessage}</span>
             </div>
